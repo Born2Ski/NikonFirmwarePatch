@@ -25,6 +25,7 @@ def edits(code, symbols):
         0xd4eeec: bl(0x40eaeeec, entries['precapture_main_step']),
         0xd4ef10: bl(0x40eaef10, entries['precapture_main_step']),
         0x4d2ffc0: struct.pack('<I', 0x1082600),
+        0x4d2ffc8: struct.pack('<I', 0x70c200),     # HN23: C60's E request (stock 0x70c000) + the record
         0x4d2ffcc: struct.pack('<I', 0x1082600),
         0x890000: code,
     }

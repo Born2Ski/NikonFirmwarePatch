@@ -22,6 +22,11 @@
  * HN21: a skipped frame is not developed either: in the development step (0x40ea9ffc) the synchronous processing
  * job (0x40e825bc, unit job 0x421e0001) is not run, and the second full-size pass (0x40eaafc0) only does its buffer
  * hand-over, so the 2 x ~48 ms per FX frame of image processing whose output nobody uses are saved.
+ * HN23: C60 (HSFC release mode 5) like C15/C30. Stock C60 buffers each frame as DX HE (5408 x 3608, the readout HN13
+ * uses) in an E of 0x70c000 and runs the same pipeline (block B: M+0 == 3), so the writer, the NEF builder and the
+ * HN18..HN21 skips apply as they are. Added: mode 5 in the mode tests, the record's 512 bytes on C60's E request, DX-sized
+ * E classes (C15/C30 use FX-sized E even for DX), the DX HE* E for hooks E and S, up to 60 pre-release frames (1 s at
+ * 60 fps), and partial decoding of RAW-only C60 bursts in HE* (every 4th frame) and HE (every 3rd).
  * Public adapter: no card configuration, diagnostic footer off by default. */
 typedef unsigned char u8;
 typedef unsigned short u16;
@@ -116,6 +121,14 @@ typedef long s64;
 #define DX_DIMS 0x0e181520u        /* HN13: 3608 << 16 | 5408, HSFC selector 4 (0x4106699c): the C60 readout */
 #define PAYLOAD_DX 0x006fa600u      /* HE: floor(5408*3608*30/80) & 0x3fffe00 (budget 2) */
 #define PAYLOAD_DX_HS 0x00ba1400u   /* HE*: floor(5408*3608*50/80) & 0x3fffe00 (budget 4) */
+/* HN23: C60's E (table 0xa02a24fc0, entry for mode 5: DX HE payload + 0x11a00 slack), + the record as for C15/C30 */
+#define OLD_ALLOCATION_DX 0x0070c000u
+#define NEW_ALLOCATION_DX (OLD_ALLOCATION_DX+0x200u)
+#define OLD_ALLOCATION_DX_HS (PAYLOAD_DX_HS+(OLD_ALLOCATION_DX-PAYLOAD_DX))   /* 0xbb2e00 */
+#define NEW_ALLOCATION_DX_HS (OLD_ALLOCATION_DX_HS+0x200u)
+#define MODE_C60 5u                 /* HSFC release mode (G_MODE, record +0x20) */
+#define HISTORY_MAX 30u             /* pre-release frames a burst may drain: 1 s at 30 fps ... */
+#define HISTORY_MAX_C60 60u         /* ... and at 60 fps (HN23) */
 #define WORK_BYTES 0x40000u        /* one heap block per NEF, freed before return */
 #define HDR_MAX 0x30000u           /* NEF header block */
 #define TAB 0x30000u               /* entry table, ENT_MAX * 32 bytes */
@@ -206,6 +219,8 @@ typedef long s64;
 #define HALF_FLAG 0x100u             /* in the selector word (request +0x98) between hook D and the job-builder hook */
 #define N_FX 5u                      /* FX: decode every 5th frame */
 #define N_DX 3u                      /* DX: decode every 3rd frame */
+#define N_C60_HS 4u                  /* HN23: C60 HE* (DX decode ~50 ms): every 4th frame */
+#define N_C60_HE 3u                  /* HN23: C60 HE (DX decode ~30 ms): every 3rd frame */
 #define G_SUBMITS 0xa03bc5634ul      /* frames submitted in this burst (+1 per stock submit 0x40f93098; 0 after 0x40f92fec) */
 #define SHOT_GET ((u32 (*)(u32))0x40ec44e4ul)   /* property read, as the submit sites use it */
 #define ID_SHOTS 0x4a05u             /* running shot total; M+0x2508 = this burst's count at submit + total */
@@ -282,8 +297,19 @@ static u32 e_class(u64 e) {
     if(!base || base+bytes<base) return 0;
     if(bytes>=NEW_ALLOCATION_HS) return C_HS;
     if(bytes>=NEW_ALLOCATION) return C_HE;
+    if(bytes>=NEW_ALLOCATION_DX_HS) return C_HS;     /* HN23: C60 */
+    if(bytes>=NEW_ALLOCATION_DX) return C_HE;
     return 0;
 }
+/* HN23: the stock request of an E's size band (the record follows it). */
+static u32 e_old(u64 bytes) {
+    if(bytes>=NEW_ALLOCATION_HS) return OLD_ALLOCATION_HS;
+    if(bytes>=NEW_ALLOCATION) return OLD_ALLOCATION;
+    if(bytes>=NEW_ALLOCATION_DX_HS) return OLD_ALLOCATION_DX_HS;
+    return OLD_ALLOCATION_DX;
+}
+/* HN23: the HSFC release modes HN takes over: C15 (6), C30 (3) and C60 (5); C120 (4) stays stock. */
+static int hn_mode(u32 mode) { return mode==6 || mode==3 || mode==MODE_C60; }
 /* HN13: the payload of a class in a geometry (FX_DIMS or DX_DIMS); 0 for any other geometry. */
 static u32 payload_of(u32 cls,u32 dims) {
     if(dims==FX_DIMS) return cls==C_HS?PAYLOAD_HS:PAYLOAD;
@@ -293,7 +319,7 @@ static u32 payload_of(u32 cls,u32 dims) {
 static u8 *record(u64 e) {
     u32 cls=e_class(e); if(!cls) return 0;
     u64 block=LOAD64(e+8),base=LOAD64(block),bytes=LOAD32(block+8);
-    u64 q=(base+(cls==C_HS?OLD_ALLOCATION_HS:OLD_ALLOCATION)+63)&~63ul;
+    u64 q=(base+e_old(bytes)+63)&~63ul;
     if(q<base || q+REC_BYTES>base+bytes) return 0;
     return (u8 *)q;
 }
@@ -348,15 +374,18 @@ __attribute__((noinline)) static void mark(void *rec,u32 kind) {
     if(!r) return;
     m=LOAD64(r+0x790); e=LOAD64(r+0x748);
     if(!m || !e || LOAD32(m)!=3) return;
-    mode=LOAD32(G_MODE); if(mode!=6 && mode!=3) return;
+    mode=LOAD32(G_MODE); if(!hn_mode(mode)) return;
     seq=LOAD32(m+0x120);
-    if(kind==K_HISTORY) { total=LOAD32(G_DRAINED); if(!seq || seq>total || total>30) return; }
+    if(kind==K_HISTORY) {
+        total=LOAD32(G_DRAINED);
+        if(!seq || seq>total || total>(mode==MODE_C60?HISTORY_MAX_C60:HISTORY_MAX)) return;
+    }
     else total=0;                    /* G_DRAINED is stale for frames after the full press */
     if(!e_shape(e) || !(q=record(e))) return;
     zero(q,REC_BYTES); copy(q,qual_magic,16); set32(q+0x10,1); set32(q+0x14,Q_MARKED);
     set32(q+0x18,seq); set32(q+0x1c,total); set32(q+0x20,mode); set32(q+0x24,LOAD32(G_LIMIT));
     set64(q+0x28,r); set64(q+0x30,e); set64(q+0x38,m); set64(q+0x40,LOAD64(e+0x40));
-    set32(q+0x48,LOAD32(e)); set32(q+0x4c,e_class(e)==C_HS?NEW_ALLOCATION_HS:NEW_ALLOCATION); CLOCK(q+0x50);
+    set32(q+0x48,LOAD32(e)); set32(q+0x4c,e_old(LOAD32(LOAD64(e+8)+8))+0x200u); CLOCK(q+0x50);
     set32(q+A_MAGIC,AUX_MAGIC); set32(q+A_KIND,kind); set32(q+A_VALUE,menu_word());
     set32(q+A_M290,LOAD32(m+0x290)); set32(q+A_M2A0,LOAD32(m+0x2a0));
     set32(q+A_CLASS,e_class(e)); set32(q+A_RAWREC,LOAD32(G_RAWREC)); set32(q+A_TENC,LOAD32(G_REQ+0xb8));
@@ -440,7 +469,7 @@ __attribute__((used)) void precapture_tdec_release(u64 r) {
 #ifdef NEG_MENU_IGNORED               /* negative-control builds only */
             type=0;
 #endif
-            if(type && (mode==6 || mode==3) && stock_hsfc_m(m) && get32(q+A_M290)==LOAD32(m+0x290) && get32(q+A_M2A0)==LOAD32(m+0x2a0)) {
+            if(type && hn_mode(mode) && stock_hsfc_m(m) && get32(q+A_M290)==LOAD32(m+0x290) && get32(q+A_M2A0)==LOAD32(m+0x2a0)) {
                 STORE32(m+0x290,qi); STORE32(m+0x2a0,half);
                 set32(q+A_QUAL,qi); set32(q+A_HALF,half); set32(q+A_TYPE,type); aux_seal(q);
                 if(type!=T_JPEG) {
@@ -487,10 +516,10 @@ static int rawrec_hs(void) {
 #endif
     return v==3 || v==1;
 }
-/* The settings ask for HE*: C15/C30, RAW or RAW + JPEG in Image quality, RAW recording HE* or (HN14) lossless. */
+/* The settings ask for HE*: C15/C30/C60 (HN23), RAW or RAW + JPEG in Image quality, RAW recording HE* or (HN14) lossless. */
 static int hs_settings(u32 mode) {
     u32 t=LOAD32(G_QTYPE);
-    return (mode==6 || mode==3) && rawrec_hs() && (t==0 || t==1);
+    return hn_mode(mode) && rawrec_hs() && (t==0 || t==1);
 }
 /* Exactly one card holds a valid configuration with "follow Image quality" and no stop file (HN5R's P2 rule). HN5
  * called this from hook T; kept only for the negative control NEG_T_FILE_IO (file calls in the capture stage). */
@@ -518,7 +547,10 @@ __attribute__((used)) void precapture_tenc_config(u64 ctx) {
 /* E. Original: bl 0x41047478(w0 frame, w1 0x39, w2 table bytes) inside 0x4104dea4, the only E allocation. */
 __attribute__((used)) u64 precapture_e_alloc(u32 frame,u32 pool,u32 size) {
 #ifndef NEG_HS_SMALL_E                /* negative-control builds only: HE* encode into an HE-sized E */
-    if(pool==0x39 && size==NEW_ALLOCATION && LOAD32(G_REQ+0xb8)==4) size=NEW_ALLOCATION_HS;
+    if(pool==0x39 && LOAD32(G_REQ+0xb8)==4) {
+        if(size==NEW_ALLOCATION) size=NEW_ALLOCATION_HS;
+        else if(size==NEW_ALLOCATION_DX) size=NEW_ALLOCATION_DX_HS;          /* HN23: C60 */
+    }
 #endif
     return POOL_ALLOC(frame,pool,size);
 }
@@ -526,7 +558,10 @@ __attribute__((used)) u64 precapture_e_alloc(u32 frame,u32 pool,u32 size) {
  * in pool 0x39, the pre-capture availability). With the HE* size there the counts match the E that will be taken. */
 __attribute__((used)) u32 precapture_e_size(u32 kind,u32 mode) {
     u32 size=E_SIZE(kind,mode);
-    if(kind==1 && size==NEW_ALLOCATION && hs_settings(mode)) size=NEW_ALLOCATION_HS;
+    if(kind==1 && hs_settings(mode)) {
+        if(size==NEW_ALLOCATION) size=NEW_ALLOCATION_HS;
+        else if(size==NEW_ALLOCATION_DX) size=NEW_ALLOCATION_DX_HS;          /* HN23: C60 */
+    }
     return size;
 }
 /* D. Original: mov w9,#2 at 0x40ea9048 in the HSFC Tdec stage (x23 = R): the decode selector of the request.
@@ -540,9 +575,12 @@ __attribute__((used)) u32 hn5_tdec_sel(u64 r) {
 #endif
     /* HN18: a RAW-only (menu value 13) HE* frame in FX or DX decodes only if it is the first frame, every N-th frame or
      * the newest submitted one (its shot number M+0x2508 equals this burst's count plus the running total: true for
-     * the newest frame during the burst and for the last frame after the burst end resets the count). */
-    if(sel==4 && e && (q=bound(r,e,Q_MARKED)) && (get32(q+A_VALUE)&0xffu)==13u) {
-        u32 dims=LOAD32(e+0x38),seq=get32(q+0x18),n=dims==FX_DIMS?N_FX:N_DX; u64 m=LOAD64(r+0x790);
+     * the newest frame during the burst and for the last frame after the burst end resets the count).
+     * HN23: in C60 also HE (the DX HE decode, ~30 ms, is slower than the 16.7 ms frame interval), with its own N. */
+    if(e && (q=bound(r,e,Q_MARKED)) && (get32(q+A_VALUE)&0xffu)==13u && (sel==4 || get32(q+0x20)==MODE_C60)) {
+        u32 dims=LOAD32(e+0x38),seq=get32(q+0x18),n; u64 m=LOAD64(r+0x790);
+        if(get32(q+0x20)==MODE_C60) n=sel==4?N_C60_HS:N_C60_HE;
+        else n=dims==FX_DIMS?N_FX:N_DX;
         if((dims==FX_DIMS || dims==DX_DIMS) &&
            !(seq<=1u || (seq-1u)%n==0u || LOAD32(m+0x2508)==LOAD32(G_SUBMITS)+SHOT_GET(ID_SHOTS))) {
             set32(q+A_SKIP,SKIP_MARK); aux_seal(q); sel|=HALF_FLAG;
@@ -596,7 +634,7 @@ static int follows_menu(u32 mode) {
 #ifdef NEG_UI_STOCK                   /* negative-control builds only: the stock HSFC test */
     return 0;
 #endif
-    return mode==6 || mode==3;
+    return hn_mode(mode);
 }
 /* G. Original: mov w0,#0x2126 (0x403acce4); bl 0x403ec398 at 0x403acce8 inside the GUI predicate 0x403acccc, which
  * returns 1 only for photo (0x2200 = 1), release mode 3..6 and 0x218c = 0, and then stores the mode to *x0. With
@@ -753,7 +791,8 @@ __attribute__((used)) const u32 precapture_dcf_ids[9] = {0x601u, 0x2000688u, 0x6
 /* NEF bytes of a C15/C30 frame under the current settings (HN5's class rule: HE* for RAW recording 3, HN14 also 1; HN13:
  * the DX payload for the cached image area DX, read the DX area in C15 and, with hook Z, in C30). */
 static u32 nef_estimate(void) {
-    return payload_of(rawrec_hs() ? C_HS : C_HE,LOAD32(G_RAREA)==1 ? DX_DIMS : FX_DIMS) + NEF_EXTRA;
+    u32 dx=LOAD32(G_RAREA)==1 || LOAD32(G_RELMODE)==MODE_C60;           /* HN23: C60 is always the DX readout */
+    return payload_of(rawrec_hs() ? C_HS : C_HE,dx ? DX_DIMS : FX_DIMS) + NEF_EXTRA;
 }
 /* 0 = the stock plan; else T_RAWJPEG / T_RAW / T_JPEG: the files HN writes per frame (the display's condition, hn_display).
  * HN11: JPEG too, since P2 gives a JPEG-only frame the ordinary grade and star as well. */
