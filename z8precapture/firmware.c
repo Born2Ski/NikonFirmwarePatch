@@ -17,6 +17,8 @@
  * HN19: a skipped frame's preview streams hold a stale image from an earlier frame (the refused decode leaves the
  * buffer untouched), so its NEF gets generated uniform-gray previews: thumbnail, VGA, FHD and a full-size JpgFromRaw at
  * the stock main JPEG's size (camera zoom reads it); without memory for the full-size one, FHD-only as a fallback.
+ * HN20: a skipped frame's main JPEG is not encoded (it would come from a stale image and is never used): a tiny gray
+ * JPEG stands in, so the JPEG engines only encode the frames that are really decoded.
  * Public adapter: no card configuration, diagnostic footer off by default. */
 typedef unsigned char u8;
 typedef unsigned short u16;
@@ -74,7 +76,7 @@ typedef long s64;
 #define CH_LOCK ((void (*)(u32,u32,u32,u32))0x40eb8854ul)
 #define CH_UNLOCK ((void (*)(u32,u32,u32,u32))0x40eb88a4ul)
 #define ENGINE ((void (*)(u32,u64))0x40e82090ul)                     /* (engine 0/1, parameter block) */
-#define IS_JPEG_FORMAT ((u32 (*)(u64))0x4105903cul)                 /* (M+0x26c): format 0/3 and not HEIF; QEMU probe only */
+#define IS_JPEG_FORMAT ((u32 (*)(u64))0x4105903cul)                 /* (M+0x26c): format 0/3 and not HEIF; HN20, QEMU probe */
 /* HN15: stock NEFInfo leaves of the header writer (tag table 0x440cdcc8): (IFD entry, {-, M}, {.., base @+0x18,
  * cursor @+0x20}). Each of these eight reads only M scalars and ROM/initialised-data tables, writes "version" + body +
  * CRC16 at the cursor, the byte count at entry+4, and advances the cursor (at most 0xbc bytes). */
@@ -944,7 +946,11 @@ __attribute__((noinline)) static u32 preview_job(u64 ctx,u64 r,u64 y,u64 src,u32
 }
 #ifndef HN4_QEMU_PROBE
 /* J. Original: bl 0x40eaea0c(ctx) in the main-JPEG step wrappers 0x40eaeed8 and 0x40eaeefc (result ignored). */
+static int hn20_skip_main(u64 r);       /* HN20, after the gray JPEG generator */
 __attribute__((used)) u32 precapture_main_step(u64 ctx) {
+    { u64 r0=LOAD64(ctx+0x18); u8 *qs=r0?retained(r0):0;               /* HN20: a skipped frame: no main encode */
+      if(qs && get32(qs+A_SKIP)==SKIP_MARK && hn20_skip_main(r0)) return 0;   /* the stock step returns 0 too */
+    }
     u32 st=MAIN_ENCODE(ctx),eng,bytes; u64 r,y,src,t0; u8 *q;
     r=LOAD64(ctx+0x18);
     if(!(q=needs_preview(r,LOAD64(r+0x790))) || get32(q+A_YSTATE)!=2) return st;
@@ -1069,6 +1075,24 @@ static u32 gray_jpeg_len(u32 w,u32 h) { u32 m=((w+15u)/16u)*((h+7u)/8u); return 
 #define GRAY_BYTES 0xd000u           /* thumbnail @0, VGA @0x600, FHD @0x2200 (each within gray_jpeg_max) */
 #define GRAY_VGA 0x600u
 #define GRAY_FHD 0x2200u
+/* HN20: under the stock main step's own conditions (0x40eaea0c: JPEG format, a source image R+0x688, main not yet
+ * encoded), put a 160x120 gray JPEG in the main region of Y (address Y+0x40, capacity Y+0x30, size Y+0x48), mark it
+ * encoded (Y+0x18) and free the source as the stock step does after its encode (when R+0x690 exists and not M+0x13f).
+ * Not done for these frames: the engine statistics and the encode block M+0x2950 (rate control and header data of a
+ * JPEG that is never written). The width and height of the descriptor come from its setup at Y allocation. */
+#define SRC_FREE ((void (*)(u64))0x410486a8ul)
+__attribute__((unused)) static int hn20_skip_main(u64 r) {
+    u64 m=LOAD64(r+0x790),y=LOAD64(r+0x6a8),src=LOAD64(r+0x688),addr; u32 n;
+    if(!m || !y || !src || !(IS_JPEG_FORMAT(m+0x26c)&1u) || LOAD8(y+0x18)!=0) return 0;
+    addr=LOAD64(y+0x40);
+    if(!addr || LOAD32(y+0x30)<gray_jpeg_len(160,120)) return 0;
+    n=gray_jpeg((u8 *)addr,160,120);
+    for(u64 a=addr&~63ul;a<addr+n;a+=64) __asm__ volatile("dc civac, %0" :: "r"(a) : "memory");   /* a DMA buffer: */
+    __asm__ volatile("dsb sy" ::: "memory");                          /* clean and invalidate, no line left */
+    STORE32(y+0x48,n); STORE8(y+0x18,1);
+    if(LOAD64(r+0x690) && !LOAD8(m+0x13f)) { SRC_FREE(src); STORE64(r+0x688,0); }
+    return 1;
+}
 
 /* ---------------- TIFF reading and writing ---------------- */
 typedef struct { const u8 *b; u32 n; } src_t;      /* little-endian TIFF, offsets from b */
@@ -1249,7 +1273,8 @@ static int build(out_t *w,const u8 *h,u32 hl,const u32 *hlen,u64 m,lay_t *L,u32 
       if(get32(P.b)!=0x002a4949u) return 0;
       const u8 *mp=find(&P,get32(P.b+4),0xb002,7,48);
       if(!mp) return 0;
-      if(get32(mp+4)!=hlen[0]+L->main.size-2 || get32(mp+20)!=hlen[1]+L->vga.size-2 ||
+      /* HN20: a skipped frame's main stream is a stand-in that the NEF never uses: its size is not required to match */
+      if((!L->gray && get32(mp+4)!=hlen[0]+L->main.size-2) || get32(mp+20)!=hlen[1]+L->vga.size-2 ||
          get32(mp+36)!=hlen[2]+L->fhd.size-2) return 0; }
     if(L->gray) { L->vga=L->gvga; L->fhd=L->gfhd; }                     /* HN19: after the check of the stock streams */
     u32 i0=get32(T.b+4),n0=ifd_count(&T,i0); if(!n0) return 0;
