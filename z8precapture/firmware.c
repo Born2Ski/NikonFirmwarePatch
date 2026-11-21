@@ -11,6 +11,9 @@
  * each part with zeros). The header block is zero-extended to the VGA preview's start (inside the MakerNote's byte range)
  * and zero segments fill the gaps after the VGA and FHD previews. The streams' buffers are 512-byte aligned; at unaligned
  * file offsets the stock writer took about 0.13 s longer on most frames of a C15/C30 burst.
+ * HN18: RAW-only HE* bursts decode only some frames for the previews: the first, every 5th (FX) or every 3rd (DX) and the
+ * newest one at its decode turn (the last frame of a burst). The others get a decode job the decoder refuses (blank
+ * previews, about 2 ms instead of 116/50 ms) and skip the decode stage's 40 ms minimum. The RAW data is unchanged.
  * Public adapter: no card configuration, diagnostic footer off by default. */
 typedef unsigned char u8;
 typedef unsigned short u16;
@@ -23,6 +26,7 @@ typedef long s64;
 #define LOAD32(a) (*(volatile const u32 *)(u64)(a))
 #define LOAD64(a) (*(volatile const u64 *)(u64)(a))
 #define STORE8(a,v) (*(volatile u8 *)(u64)(a)=(v))
+#define STORE16(a,v) (*(volatile u16 *)(u64)(a)=(v))
 #define STORE32(a,v) (*(volatile u32 *)(u64)(a)=(v))
 #define STORE64(a,v) (*(volatile u64 *)(u64)(a)=(v))
 
@@ -188,6 +192,17 @@ typedef long s64;
 #define A_DUAL_ROLE 0xf0u          /* HN7R: the secondary slot role (1..3) the primary entry acted on */
 #define A_SUBMIT 0xf4u             /* HN8: at submit, SUBMIT_MARK | primary slot << 8 | secondary slot role (each clamped to 0xff) */
 #define A_CRC 0xfcu
+/* HN18: partial decoding of RAW-only HE* bursts (see hn5_tdec_sel) */
+#define A_SKIP 0xf8u                 /* SKIP_MARK: this frame's decode is refused (blank previews) */
+#define SKIP_MARK 0x50494b53u        /* "SKIP" */
+#define HALF_FLAG 0x100u             /* in the selector word (request +0x98) between hook D and the job-builder hook */
+#define N_FX 5u                      /* FX: decode every 5th frame */
+#define N_DX 3u                      /* DX: decode every 3rd frame */
+#define G_SUBMITS 0xa03bc5634ul      /* frames submitted in this burst (+1 per stock submit 0x40f93098; 0 after 0x40f92fec) */
+#define SHOT_GET ((u32 (*)(u32))0x40ec44e4ul)   /* property read, as the submit sites use it */
+#define ID_SHOTS 0x4a05u             /* running shot total; M+0x2508 = this burst's count at submit + total */
+#define STAGE_MIN_US 40000ul         /* the decode stage's minimum time (0x40ea918c: 40 ms, 20 ms with 0xa03b85924) */
+#define JOB_BUILD ((void (*)(u64,u32,u64,u64))0x40e893a4ul)   /* decode job builder (request, 1, job, aux) */
 #define REC_BYTES 256u
 
 static const u8 qual_magic[16] = "Z8PREQUALv5";
@@ -438,6 +453,19 @@ __attribute__((used)) void precapture_tdec_release(u64 r) {
     STORE64(r+0x748,0);
 }
 
+/* HN18: P2 entry. The stub passes the decode stage's sp; the stage keeps its start time at [sp+8] (0x40ea9008) and
+ * sleeps after P2 until STAGE_MIN_US have passed. For a refused (skipped) decode the start time is moved back. */
+__attribute__((used)) void hn18_tdec_release(u64 r,u64 sp) {
+    u64 e=r?LOAD64(r+0x748):0; u8 *q=e?bound(r,e,Q_MARKED):0;
+    int skip=q && get32(q+A_SKIP)==SKIP_MARK;
+    precapture_tdec_release(r);
+    if(skip) STORE64(sp+8,LOAD64(sp+8)-STAGE_MIN_US);
+}
+__asm__(".pushsection .text.hn18stub,\"ax\",%progbits\n"
+        ".global precapture_tdec_release_entry\n.type precapture_tdec_release_entry,%function\n"
+        "precapture_tdec_release_entry:\n\tmov x1, sp\n\tb hn18_tdec_release\n"
+        ".popsection\n");
+
 /* ---------------- HN5: HE* (hooks T, E, S, D) ---------------- */
 #define TENC_CONFIG ((void (*)(u64))0x40e8db3cul)                  /* (stage context): request type, budget, transform */
 #define POOL_ALLOC ((u64 (*)(u32,u32,u32))0x41047478ul)            /* (frame, pool 0x39, bytes) -> E */
@@ -496,13 +524,34 @@ __attribute__((used)) u32 precapture_e_size(u32 kind,u32 mode) {
 /* D. Original: mov w9,#2 at 0x40ea9048 in the HSFC Tdec stage (x23 = R): the decode selector of the request.
  * The entry stub keeps x8 and x10, which the stage uses right after. */
 __attribute__((used)) u32 hn5_tdec_sel(u64 r) {
-    u64 e=r?LOAD64(r+0x748):0;
+    u64 e=r?LOAD64(r+0x748):0; u32 sel=2; u8 *q;
 #ifndef NEG_TDEC_FIXED                /* negative-control builds only: the stock constant */
-    if(e && e_class(e)==C_HS) return 4;
+    if(e && e_class(e)==C_HS) sel=4;
 #else
     (void)e;
 #endif
-    return 2;
+    /* HN18: a RAW-only (menu value 13) HE* frame in FX or DX decodes only if it is the first frame, every N-th frame or
+     * the newest submitted one (its shot number M+0x2508 equals this burst's count plus the running total: true for
+     * the newest frame during the burst and for the last frame after the burst end resets the count). */
+    if(sel==4 && e && (q=bound(r,e,Q_MARKED)) && (get32(q+A_VALUE)&0xffu)==13u) {
+        u32 dims=LOAD32(e+0x38),seq=get32(q+0x18),n=dims==FX_DIMS?N_FX:N_DX; u64 m=LOAD64(r+0x790);
+        if((dims==FX_DIMS || dims==DX_DIMS) &&
+           !(seq<=1u || (seq-1u)%n==0u || LOAD32(m+0x2508)==LOAD32(G_SUBMITS)+SHOT_GET(ID_SHOTS))) {
+            set32(q+A_SKIP,SKIP_MARK); aux_seal(q); sel|=HALF_FLAG;
+        }
+    }
+    return sel;
+}
+/* HN18: hook at 0x40e8904c (bl 0x40e893a4 in the decode job setup 0x40e8900c). A flagged request gets half its output
+ * size in the output descriptor (request +0x58/+0x5a) and in the job (+0x24/+0x26): the decoder refuses it at once. */
+__attribute__((used)) void precapture_dec_job(u64 req,u32 mode,u64 job,u64 aux) {
+    u32 sel=LOAD32(req+0x98),half=sel&HALF_FLAG;
+    if(half) {
+        STORE32(req+0x98,sel&~HALF_FLAG);
+        STORE16(req+0x58,LOAD16(req+0x58)/2u); STORE16(req+0x5a,LOAD16(req+0x5a)/2u);
+    }
+    JOB_BUILD(req,mode,job,aux);
+    if(half) { STORE16(job+0x24,LOAD16(job+0x24)/2u); STORE16(job+0x26,LOAD16(job+0x26)/2u); }
 }
 __asm__(".pushsection .text.hn5stub,\"ax\",%progbits\n"
         ".global precapture_tdec_sel_entry\n.type precapture_tdec_sel_entry,%function\n"

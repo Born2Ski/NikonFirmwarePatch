@@ -16,7 +16,7 @@ def edits(code, symbols):
 
     values = {
         0xe0fe90: bl(0x40f6fe90, entries['precapture_history_entry']),
-        0xd4915c: bytes.fromhex('e00317aa') + bl(0x40ea9160, entries['precapture_tdec_release']) + bytes.fromhex('1f2003d5'),
+        0xd4915c: bytes.fromhex('e00317aa') + bl(0x40ea9160, entries['precapture_tdec_release_entry']) + bytes.fromhex('1f2003d5'),
         0xd43638: bl(0x40ea3638, entries['precapture_write_file']),
         0xd4eb60: bl(0x40eaeb60, entries['precapture_main_rc']),
         0xe0ff38: bl(0x40f6ff38, entries['precapture_current_entry']),
@@ -37,6 +37,7 @@ def edits(code, symbols):
         (0x40f98c4c, 'precapture_e_size'),
         (0x40f9a0b4, 'precapture_e_size'),
         (0x40ea9048, 'precapture_tdec_sel_entry'),
+        (0x40e8904c, 'precapture_dec_job'),      # HN18: decode job builder call
         (0x403acce8, 'precapture_gui_mode'),
         (0x40f96c90, 'precapture_ready_margin'),
         (0x40d49044, 'precapture_ui_mode'),
