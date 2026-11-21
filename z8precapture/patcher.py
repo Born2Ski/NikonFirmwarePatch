@@ -38,6 +38,7 @@ def edits(code, symbols):
         (0x40f9a0b4, 'precapture_e_size'),
         (0x40ea9048, 'precapture_tdec_sel_entry'),
         (0x40e8904c, 'precapture_dec_job'),      # HN18: decode job builder call
+        (0x40eaa4ec, 'precapture_dev_run_entry'),  # HN21: synchronous development job call in 0x40eaa498
         (0x403acce8, 'precapture_gui_mode'),
         (0x40f96c90, 'precapture_ready_margin'),
         (0x40d49044, 'precapture_ui_mode'),
@@ -55,6 +56,8 @@ def edits(code, symbols):
     for index, entry in callbacks.items():
         at = 0x4b13000 + 0xa0295c558 + 0x68 * index + 0x30 - 0xa02808000
         values[at] = struct.pack('<Q', entries[entry])
+    # HN21: the second full-size pass in the C15/C30 pipeline's stage list (initialized-data image), stock 0x40eaafc0
+    values[0x44f385a0 - 0x40160000] = struct.pack('<Q', entries['precapture_pass2_step'])
     values[0x704938] = bl(0x40864938,entries['precapture_expand'])
     values[0x7103E4] = bl(0x408703E4,entries['precapture_dcf_item'])
     ids=entries['precapture_dcf_ids']

@@ -19,6 +19,9 @@
  * the stock main JPEG's size (camera zoom reads it); without memory for the full-size one, FHD-only as a fallback.
  * HN20: a skipped frame's main JPEG is not encoded (it would come from a stale image and is never used): a tiny gray
  * JPEG stands in, so the JPEG engines only encode the frames that are really decoded.
+ * HN21: a skipped frame is not developed either: in the development step (0x40ea9ffc) the synchronous processing
+ * job (0x40e825bc, unit job 0x421e0001) is not run, and the second full-size pass (0x40eaafc0) only does its buffer
+ * hand-over, so the 2 x ~48 ms per FX frame of image processing whose output nobody uses are saved.
  * Public adapter: no card configuration, diagnostic footer off by default. */
 typedef unsigned char u8;
 typedef unsigned short u16;
@@ -1092,6 +1095,49 @@ __attribute__((unused)) static int hn20_skip_main(u64 r) {
     STORE32(y+0x48,n); STORE8(y+0x18,1);
     if(LOAD64(r+0x690) && !LOAD8(m+0x13f)) { SRC_FREE(src); STORE64(r+0x688,0); }
     return 1;
+}
+/* HN21 development job. Original: bl 0x40e825bc(unit 0, 0xa03b89390) at 0x40eaa4ec in 0x40eaa498, the development of
+ * the decode output R+0x3a0 in C15/C30 (register set built from the state; 0x40c9fb78 runs unit job 0x421e0001 and waits
+ * for it; the caller ignores the result). The entry stub passes x20 = R. A skipped frame's job is not run; the set-up
+ * before it and the finish, metadata copy (0x40eb5944) and clean-up after it stay as they are. */
+#define DEV_RUN ((u32 (*)(u32,u64))0x40e825bcul)
+__attribute__((used)) u32 hn21_dev_run(u32 unit,u64 state,u64 r) {
+    u8 *q=r?retained(r):0;
+    if(q && get32(q+A_SKIP)==SKIP_MARK) return 1;
+    return DEV_RUN(unit,state);
+}
+__asm__(".pushsection .text.hn21stub,\"ax\",%progbits\n"
+        ".global precapture_dev_run_entry\n.type precapture_dev_run_entry,%function\n"
+        "precapture_dev_run_entry:\n\tmov x2, x20\n\tb hn21_dev_run\n"
+        ".popsection\n");
+/* HN21 second pass. Original: the step 0x40eaafc0 in the C15/C30 pipeline's stage list (R+0x688 -> R+0x690, then
+ * R+0x690 becomes R+0x688). For a skipped frame that the stock step would process (its own entry tests,
+ * 0x40eab000..0x40eab07c), only its hand-over 0x40eab4b4..0x40eab570 is done: buffers rotated, +0x28 marks, R+0x6a0
+ * +0x19 (and +0x18 when the pass makes the reduced image, ctx+0x67ac == 0), the old image freed. Every other case runs
+ * the stock step. */
+#define PASS2_STEP ((u64 (*)(u64,u64,u64,u64,u64,u64,u64,u64))0x40eaafc0ul)
+#define PASS2_PRED ((u32 (*)(u64))0x40ea6370ul)
+static int pass2_would_run(u64 r) {
+    u64 s=LOAD64(r+0x6a0),m=LOAD64(r+0x790),x;
+    if(!LOAD64(r+0x688) || !s || !m || LOAD8(s+0x19) || LOAD8(s+0x18) || LOAD8(s+0x1a)) return 0;
+    if(LOAD32(m+0x294) || LOAD32(m+0x2fc)==1 || (PASS2_PRED(r)&1u)) {
+        if(!LOAD8(m+0x2ce) || LOAD32(m+0x298)==LOAD32(m+0x2d0)) return 1;
+    }
+    x=LOAD64(r+0x698);
+    return x && !LOAD8(x+0x28);
+}
+__attribute__((used)) u64 precapture_pass2_step(u64 a0,u64 a1,u64 a2,u64 a3,u64 a4,u64 a5,u64 a6,u64 a7) {
+    u64 r=a0?LOAD64(a0+0x18):0,x8,x0,x9,s; u8 *q;
+    if(!r || !(q=retained(r)) || get32(q+A_SKIP)!=SKIP_MARK || !pass2_would_run(r) || !LOAD64(r+0x690))
+        return PASS2_STEP(a0,a1,a2,a3,a4,a5,a6,a7);
+    x8=LOAD64(r+0x698); x0=LOAD64(r+0x688); x9=LOAD64(r+0x690); s=LOAD64(r+0x6a0);
+    if(x8) { STORE64(r+0x690,x8); STORE64(r+0x698,x0); }
+    else { STORE64(r+0x698,x0); STORE64(r+0x690,0); }
+    STORE64(r+0x688,x9); STORE8(x9+0x28,1);
+    STORE8(s+0x19,1); if(!LOAD8(a0+0x67ac)) STORE8(s+0x18,1);
+    if(x8) STORE8(x8+0x28,1);
+    if(x0) { SRC_FREE(x0); STORE64(r+0x698,0); }
+    return 0;
 }
 
 /* ---------------- TIFF reading and writing ---------------- */
