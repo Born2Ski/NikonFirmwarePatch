@@ -14,6 +14,9 @@
  * HN18: RAW-only HE* bursts decode only some frames for the previews: the first, every 5th (FX) or every 3rd (DX) and the
  * newest one at its decode turn (the last frame of a burst). The others get a decode job the decoder refuses (blank
  * previews, about 2 ms instead of 116/50 ms) and skip the decode stage's 40 ms minimum. The RAW data is unchanged.
+ * HN19: a skipped frame's preview streams hold a stale image from an earlier frame (the refused decode leaves the
+ * buffer untouched), so its NEF gets generated uniform-gray previews: thumbnail, VGA, FHD and a full-size JpgFromRaw at
+ * the stock main JPEG's size (camera zoom reads it); without memory for the full-size one, FHD-only as a fallback.
  * Public adapter: no card configuration, diagnostic footer off by default. */
 typedef unsigned char u8;
 typedef unsigned short u16;
@@ -999,6 +1002,74 @@ __attribute__((used)) void precapture_main_rc(u64 r,u32 mode,u32 kind,u64 tmpl,u
 __attribute__((used)) void precapture_main_rc(u64 r,u32 mode,u32 kind,u64 tmpl,u8 *rc) { RC_PARAMS(r,mode,kind,tmpl,rc); }
 #endif
 
+/* HN19: uniform mid-gray baseline JPEG, 4:2:2 like the camera's own previews. Every block has DC difference 0 and an
+ * immediate EOB; with the standard (Annex K) Huffman tables that is 6 bits per Y block and 4 per chroma block, 20 bits
+ * per 16x8 MCU. DC 0 with a quantiser of 1 decodes to Y = 128, Cb = Cr = 128 (neutral mid gray). */
+static const u8 gj_bits[4][16]={{0,1,5,1,1,1,1,1,1,0,0,0,0,0,0,0},{0,2,1,3,3,2,4,3,5,5,4,4,0,0,1,0x7d},
+                                {0,3,1,1,1,1,1,1,1,1,1,0,0,0,0,0},{0,2,1,2,4,4,3,4,7,5,4,4,0,1,2,0x77}};
+static const u8 gj_dc[12]={0,1,2,3,4,5,6,7,8,9,10,11};
+static const u8 gj_acl[162]={
+ 0x01,0x02,0x03,0x00,0x04,0x11,0x05,0x12,0x21,0x31,0x41,0x06,0x13,0x51,0x61,0x07,0x22,0x71,0x14,0x32,0x81,0x91,0xa1,0x08,
+ 0x23,0x42,0xb1,0xc1,0x15,0x52,0xd1,0xf0,0x24,0x33,0x62,0x72,0x82,0x09,0x0a,0x16,0x17,0x18,0x19,0x1a,0x25,0x26,0x27,0x28,
+ 0x29,0x2a,0x34,0x35,0x36,0x37,0x38,0x39,0x3a,0x43,0x44,0x45,0x46,0x47,0x48,0x49,0x4a,0x53,0x54,0x55,0x56,0x57,0x58,0x59,
+ 0x5a,0x63,0x64,0x65,0x66,0x67,0x68,0x69,0x6a,0x73,0x74,0x75,0x76,0x77,0x78,0x79,0x7a,0x83,0x84,0x85,0x86,0x87,0x88,0x89,
+ 0x8a,0x92,0x93,0x94,0x95,0x96,0x97,0x98,0x99,0x9a,0xa2,0xa3,0xa4,0xa5,0xa6,0xa7,0xa8,0xa9,0xaa,0xb2,0xb3,0xb4,0xb5,0xb6,
+ 0xb7,0xb8,0xb9,0xba,0xc2,0xc3,0xc4,0xc5,0xc6,0xc7,0xc8,0xc9,0xca,0xd2,0xd3,0xd4,0xd5,0xd6,0xd7,0xd8,0xd9,0xda,0xe1,0xe2,
+ 0xe3,0xe4,0xe5,0xe6,0xe7,0xe8,0xe9,0xea,0xf1,0xf2,0xf3,0xf4,0xf5,0xf6,0xf7,0xf8,0xf9,0xfa};
+static const u8 gj_acc[162]={
+ 0x00,0x01,0x02,0x03,0x11,0x04,0x05,0x21,0x31,0x06,0x12,0x41,0x51,0x07,0x61,0x71,0x13,0x22,0x32,0x81,0x08,0x14,0x42,0x91,
+ 0xa1,0xb1,0xc1,0x09,0x23,0x33,0x52,0xf0,0x15,0x62,0x72,0xd1,0x0a,0x16,0x24,0x34,0xe1,0x25,0xf1,0x17,0x18,0x19,0x1a,0x26,
+ 0x27,0x28,0x29,0x2a,0x35,0x36,0x37,0x38,0x39,0x3a,0x43,0x44,0x45,0x46,0x47,0x48,0x49,0x4a,0x53,0x54,0x55,0x56,0x57,0x58,
+ 0x59,0x5a,0x63,0x64,0x65,0x66,0x67,0x68,0x69,0x6a,0x73,0x74,0x75,0x76,0x77,0x78,0x79,0x7a,0x82,0x83,0x84,0x85,0x86,0x87,
+ 0x88,0x89,0x8a,0x92,0x93,0x94,0x95,0x96,0x97,0x98,0x99,0x9a,0xa2,0xa3,0xa4,0xa5,0xa6,0xa7,0xa8,0xa9,0xaa,0xb2,0xb3,0xb4,
+ 0xb5,0xb6,0xb7,0xb8,0xb9,0xba,0xc2,0xc3,0xc4,0xc5,0xc6,0xc7,0xc8,0xc9,0xca,0xd2,0xd3,0xd4,0xd5,0xd6,0xd7,0xd8,0xd9,0xda,
+ 0xe2,0xe3,0xe4,0xe5,0xe6,0xe7,0xe8,0xe9,0xea,0xf2,0xf3,0xf4,0xf5,0xf6,0xf7,0xf8,0xf9,0xfa};
+typedef struct { u8 *o; u32 n,acc,bits; } gj_bw;
+static void gj_put(gj_bw *b,u32 v,u32 nb) {
+    while(nb--) {
+        b->acc=(b->acc<<1)|((v>>nb)&1u);
+        if(++b->bits==8) { u8 c=(u8)b->acc; b->o[b->n++]=c; if(c==0xff) b->o[b->n++]=0; b->acc=0; b->bits=0; }
+    }
+}
+/* Writes the JPEG at o (room: gray_jpeg_max(w,h) bytes) and returns its length. */
+__attribute__((unused)) static u32 gray_jpeg_max(u32 w,u32 h) { return 620u+((w+15u)/16u)*((h+7u)/8u)*3u; }
+static u32 gray_jpeg(u8 *o,u32 w,u32 h) {
+    static const u8 sos[14]={0xff,0xda,0,12,3,1,0x00,2,0x11,3,0x11,0,63,0};
+    static const u8 cls[4]={0x00,0x10,0x01,0x11};
+    u32 n=0,mcus=((w+15u)/16u)*((h+7u)/8u);
+    o[n++]=0xff; o[n++]=0xd8;                                                   /* SOI */
+    o[n++]=0xff; o[n++]=0xdb; o[n++]=0; o[n++]=67; o[n++]=0;                    /* DQT table 0: all 1 */
+    for(u32 i=0;i<64;i++) o[n++]=1;
+    o[n++]=0xff; o[n++]=0xc0; o[n++]=0; o[n++]=17; o[n++]=8;                    /* SOF0, 8 bit, 3 components */
+    o[n++]=(u8)(h>>8); o[n++]=(u8)h; o[n++]=(u8)(w>>8); o[n++]=(u8)w; o[n++]=3;
+    o[n++]=1; o[n++]=0x21; o[n++]=0; o[n++]=2; o[n++]=0x11; o[n++]=0; o[n++]=3; o[n++]=0x11; o[n++]=0;
+    o[n++]=0xff; o[n++]=0xc4; o[n++]=0x01; o[n++]=0xa2;                         /* DHT: 2 + 4 x 17 + 12 + 162 + 12 + 162 */
+    for(u32 t=0;t<4;t++) {
+        const u8 *vals=t==1?gj_acl:t==3?gj_acc:gj_dc; u32 nv=0;
+        o[n++]=cls[t];
+        for(u32 i=0;i<16;i++) { o[n++]=gj_bits[t][i]; nv+=gj_bits[t][i]; }
+        for(u32 i=0;i<nv;i++) o[n++]=vals[i];
+    }
+    for(u32 i=0;i<14;i++) o[n++]=sos[i];                                        /* SOS */
+    gj_bw b={o,n,0,0};
+    u32 k=0;
+    if(mcus>=2) {                                     /* two MCUs = 40 bits = 5 bytes: code them once, then repeat */
+        for(;k<2;k++) { gj_put(&b,0x0a,6); gj_put(&b,0x0a,6); gj_put(&b,0,4); gj_put(&b,0,4); }   /* Y Y Cb Cr */
+        const u8 *pat=o+b.n-5; u8 *d=o+b.n;
+        for(;k+2<=mcus;k+=2) { d[0]=pat[0]; d[1]=pat[1]; d[2]=pat[2]; d[3]=pat[3]; d[4]=pat[4]; d+=5; }
+        b.n=(u32)(d-o);
+    }
+    for(;k<mcus;k++) { gj_put(&b,0x0a,6); gj_put(&b,0x0a,6); gj_put(&b,0,4); gj_put(&b,0,4); }     /* an odd last MCU */
+    if(b.bits) gj_put(&b,(1u<<(8u-b.bits))-1u,8u-b.bits);                       /* pad with 1 bits */
+    n=b.n; o[n++]=0xff; o[n++]=0xd9;                                            /* EOI */
+    return n;
+}
+/* Exact length of gray_jpeg(w, h): 524 header bytes, 5 bytes per MCU pair (+3 for an odd MCU), EOI. */
+static u32 gray_jpeg_len(u32 w,u32 h) { u32 m=((w+15u)/16u)*((h+7u)/8u); return 524u+(m/2u)*5u+(m&1u)*3u+2u; }
+#define GRAY_BYTES 0xd000u           /* thumbnail @0, VGA @0x600, FHD @0x2200 (each within gray_jpeg_max) */
+#define GRAY_VGA 0x600u
+#define GRAY_FHD 0x2200u
+
 /* ---------------- TIFF reading and writing ---------------- */
 typedef struct { const u8 *b; u32 n; } src_t;      /* little-endian TIFF, offsets from b */
 typedef struct {
@@ -1094,6 +1165,7 @@ static int stream(u64 d,stream_t *s) {
 typedef struct {
     u32 hdr_end,vga_at,fhd_at,main_at,raw_at,end_at,mn_at,thumb_bytes;   /* main_at: where the embedded full-size JPEG goes */
     stream_t main,vga,fhd,jfr;           /* jfr: the embedded full-size JPEG (the main JPEG, or HN4's preview in Y) */
+    stream_t gthm,gvga,gfhd; u32 gray;   /* HN19: generated gray previews of a skipped frame (gray != 0) */
 } lay_t;
 static u8 *nb(u8 *p,const char *v,const u8 *body,u32 n,u32 zeros) {   /* "0100"+body[+0000]+CRC16 */
     copy(p,(const u8 *)v,4); copy(p+4,body,n); zero(p+4+n,zeros);
@@ -1179,6 +1251,7 @@ static int build(out_t *w,const u8 *h,u32 hl,const u32 *hlen,u64 m,lay_t *L,u32 
       if(!mp) return 0;
       if(get32(mp+4)!=hlen[0]+L->main.size-2 || get32(mp+20)!=hlen[1]+L->vga.size-2 ||
          get32(mp+36)!=hlen[2]+L->fhd.size-2) return 0; }
+    if(L->gray) { L->vga=L->gvga; L->fhd=L->gfhd; }                     /* HN19: after the check of the stock streams */
     u32 i0=get32(T.b+4),n0=ifd_count(&T,i0); if(!n0) return 0;
     u32 i1=get32(T.b+i0+2+12*n0);
     const u8 *x0=find(&T,i0,0x8769,4,1); if(!x0) return 0;
@@ -1189,6 +1262,8 @@ static int build(out_t *w,const u8 *h,u32 hl,const u32 *hlen,u64 m,lay_t *L,u32 
     if(!tho || !thl) return 0;
     u32 thumb=get32(tho),thn=get32(thl);
     if(thn<4 || thumb>T.n || thn>T.n-thumb || get16(T.b+thumb)!=0xd8ff || get16(T.b+thumb+thn-2)!=0xd9ff) return 0;
+    const u8 *thp=T.b+thumb;
+    if(L->gray) { thp=(const u8 *)L->gthm.addr; thn=L->gthm.size; }      /* HN19 */
     const u8 *dto=find(&T,ix,0x9003,2,20);
     /* MakerNote */
     u32 mnc=0,mnoff=0,nx=ifd_count(&T,ix);
@@ -1262,7 +1337,7 @@ static int build(out_t *w,const u8 *h,u32 hl,const u32 *hlen,u64 m,lay_t *L,u32 
     n=0; if(!copy_entries(&T,ix,t,&n,skipx,sizeof(skipx)/2)) return 0;
     e=add(t,&n,0x927c,7,4,0); if(!e) return 0; e->eslot=P_MNENT;
     u32 xat=emit(w,t,n,0);
-    pad2(w); u32 tat=w->pos; put(w,T.b+thumb,thn);
+    pad2(w); u32 tat=w->pos; put(w,thp,thn);
     /* MakerNote rebuilt with its IFD at offset 8; every value relocated into it. */
     pad2(w); L->mn_at=w->pos; u32 mb=w->pos+10; put(w,nikon2,18);
     n=0; if(!copy_entries(&MN,im,t,&n,skipm,sizeof(skipm)/2)) return 0;
@@ -1340,6 +1415,7 @@ typedef struct {
     u64 dims_src;                        /* the stock JPEG's descriptor 0 (width/height words), 0 if none */
     u32 dual,second,role;                /* HN7R: as job_t */
     char drive,fin[64],tmp[64];
+    u8 *graw,*gfull;                     /* HN19: gray preview blocks (ALLOC): small previews, full-size; freed after the write */
     lay_t L;
 } plan_t;
 
@@ -1456,12 +1532,36 @@ __attribute__((noinline)) static plan_t *prepare(const job_t *jb) {
         else if(!preview_stream(p,LOAD64(da))) p->flags&=~F_FULL;    /* no valid preview: FHD-only, as without hook J's mark */
     }
     if(!jpg_name(p->jid,p->fin,p->tmp) || p->fin[0]!=p->drive || p->fin[1]!=':' || EXISTS(p->fin)>=0 || EXISTS(p->tmp)>=0) goto bad;
+    /* HN19: a skipped frame gets generated gray previews (JpgFromRaw: full-size gray, or the gray FHD as a fallback) */
+    if(get32(jb->q+A_SKIP)==SKIP_MARK) {
+        u8 *g=(u8 *)ALLOC(GRAY_BYTES+511u,0);
+        if(g) {
+            u8 *b=(u8 *)(((u64)g+511u)&~511ul); u32 nt,nv,nf;
+            nt=gray_jpeg(b,160,120); nv=gray_jpeg(b+GRAY_VGA,640,424); nf=gray_jpeg(b+GRAY_FHD,1620,1080);
+            CLEAN(b,GRAY_FHD+nf);
+            p->graw=g; p->L.gray=1; p->flags&=~(F_FULL|F_PREV);
+            p->L.gthm.addr=(u64)b; p->L.gthm.size=nt; p->L.gvga.addr=(u64)(b+GRAY_VGA); p->L.gvga.size=nv;
+            p->L.gfhd.addr=(u64)(b+GRAY_FHD); p->L.gfhd.size=nf;
+            /* full-size gray JpgFromRaw at the stock main JPEG's size (descriptor 0), so camera zoom shows gray */
+            u32 fw=p->dims_src?LOAD16(p->dims_src+4):0u,fh=p->dims_src?LOAD16(p->dims_src+6):0u;
+            if(fw>=1620u && fh>=1080u && fw<=8256u && fh<=5504u) {
+                u32 need=gray_jpeg_len(fw,fh); u8 *G=(u8 *)ALLOC(need+511u,0);
+                if(G) {
+                    u8 *gb=(u8 *)(((u64)G+511u)&~511ul); u32 nfull=gray_jpeg(gb,fw,fh);
+                    CLEAN(gb,nfull);
+                    p->gfull=G; p->L.jfr.addr=(u64)gb; p->L.jfr.size=nfull; p->flags|=F_FULL;
+                }
+            }
+        }
+    }
     zero((u8 *)&w,sizeof(w)); w.o=wk; w.cap=HDR_MAX;
     u32 only=(p->dual?dual_action(p->flags,p->role,p->second):((p->flags&F_RAWONLY)?ACT_NEF:ACT_BOTH))==ACT_NEF?F_NEFONLY:0u;   /* as flow() */
     if(!build(&w,(const u8 *)XLATE(hp),hl,p->hlen,p->m,&p->L,p->flags|only,wk,p->cls,LOAD32(jb->e+0x38)) || p->L.end_at<p->L.raw_at) goto bad;
     p->hdr_bytes=p->L.vga_at; p->total=p->L.end_at+((p->flags&F_FOOTER)?512u:0u); p->t_header=now();   /* HN17: up to vga_at */
     return p;
 bad:
+    if(p->gfull) FREE(p->gfull);                                        /* HN19 */
+    if(p->graw) FREE(p->graw);
     FREE(raw);
     return 0;
 }
@@ -1702,6 +1802,8 @@ __attribute__((noinline,unused)) static u32 take(const job_t *jb,u64 J) {
             aux_seal(jb->q); kept=1;
         }
     }
+    if(p->gfull) FREE(p->gfull);                                    /* HN19 */
+    if(p->graw) FREE(p->graw);
     FREE(p->raw);
 #ifndef NEG_LEAK_E                    /* negative-control builds only */
     if(!kept) release_e(jb);
