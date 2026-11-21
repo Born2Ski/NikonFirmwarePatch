@@ -26,6 +26,7 @@ def edits(code, symbols):
         0xd4ef10: bl(0x40eaef10, entries['precapture_main_step']),
         0x4d2ffc0: struct.pack('<I', 0x1082600),
         0x4d2ffc8: struct.pack('<I', 0x70c200),     # HN23: C60's E request (stock 0x70c000) + the record
+        0x4cd59f0: struct.pack('<3I', 6, 10, 20),   # HN24: C15 pre-release frames for 0.3/0.5/1 s (stock 5, 8, 15)
         0x4d2ffcc: struct.pack('<I', 0x1082600),
         0x890000: code,
     }
@@ -40,6 +41,8 @@ def edits(code, symbols):
         (0x40ea9048, 'precapture_tdec_sel_entry'),
         (0x40e8904c, 'precapture_dec_job'),      # HN18: decode job builder call
         (0x40eaa4ec, 'precapture_dev_run_entry'),  # HN21: synchronous development job call in 0x40eaa498
+        (0x40f807bc, 'precapture_frame_skip'),     # HN24: photo-frame selector calls
+        (0x40f80a2c, 'precapture_frame_skip'),
         (0x403acce8, 'precapture_gui_mode'),
         (0x40f96c90, 'precapture_ready_margin'),
         (0x40d49044, 'precapture_ui_mode'),
@@ -68,3 +71,27 @@ def edits(code, symbols):
     values[0x70E918]=struct.pack('<I',0xF2A00002|((ids>>16)<<5))
     values[0x70E94C]=struct.pack('<I',0x52800003|(9<<5))
     return [dict(offset=at,new=raw,purpose='pre-capture code' if at==0x890000 else 'pre-capture hook/data '+hex(at)) for at,raw in sorted(values.items())]
+
+
+# HN24: C15 takes 20 photos per second, so its release-mode label (UI string 2371, "C15" in every language; Arabic has
+# a right-to-left mark in front) reads "C20". Same length: the two digits are replaced in place in each language's text.
+LANG_TABLES, LANG_TEXT, C15_LABEL = 0x311C5A0, 0x387AF58, 2371   # EG offsets of the 36 offset-table / text pointers
+
+
+def label_edits(eg):
+    out, seen = [], set()
+    for language in range(36):
+        table = struct.unpack_from('<Q', eg, LANG_TABLES + 8 * language)[0] - BASE
+        text = struct.unpack_from('<Q', eg, LANG_TEXT + 8 * language)[0] - BASE
+        start, end = struct.unpack_from('<2i', eg, table + 4 * C15_LABEL)
+        label = eg[text + start:text + end]
+        at = label.find('C15'.encode('utf-16le'))
+        require(at >= 0 and at % 2 == 0 and label.decode('utf-16le').lstrip('‫') == 'C15',
+                f'C15 label: unexpected stock text in language {language}')
+        offset = text + start + at + 2
+        if offset in seen:
+            continue
+        seen.add(offset)
+        out.append(dict(offset=offset, old='15'.encode('utf-16le'), new='20'.encode('utf-16le'),
+                        purpose=f'pre-capture: C15 label reads C20 (language {language})'))
+    return out

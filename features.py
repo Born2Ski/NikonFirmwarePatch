@@ -107,6 +107,10 @@ def compose(eg, features, compiler='clang', code_source='prebuilt', *, check_rec
         dx=dx_edits(eg)
         for e in dx:img.put(e['offset'],e['new'],e['purpose'],expect=e['old'])
         detail['dx-lens-fx']=dict(edits=len(dx))
+        from z8precapture.patcher import label_edits
+        lab=label_edits(eg)
+        for e in lab:img.put(e['offset'],e['new'],e['purpose'],expect=e['old'])
+        detail['c15-label']=dict(edits=len(lab))
     detail['strings']=strings.emit(img)
     if callbacks:
         code,entries=unit('shared')
