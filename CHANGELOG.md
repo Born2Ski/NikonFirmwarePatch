@@ -2,11 +2,21 @@
 
 ## 未发布 / Unreleased
 
+### 新增
+
+- **DX 镜头使用 FX 影像区域。** 针对[问题 #45](https://github.com/XinmiaoZhao/NikonFirmwarePatch/issues/45)：`raw-precapture` 现在允许在安装电子 DX 镜头（Z 卡口 DX 镜头，或经 FTZ 转接的 F 卡口 DX 镜头）时选择 FX（36×24），相当于 D850 的“自动 DX 裁切：关闭”。相机不再自动切换到 DX；需要 DX 时请手动选择。照片、视频和延时视频的“选择影像区域”、8K 与 FX N-RAW／ProRes RAW 视频尺寸、影像区域按键功能以及 PTP 设置不再因 DX 镜头而锁定。“图像除尘参照照片”在 DX 镜头下仍不可用；镜头仍按 DX 报告（EXIF、PTP）。共 36 处固定字节修改（`z8dxlens/patcher.py`），无新增代码；`resources/combinations.json` 中包含 `raw-precapture` 的配置各增加这 36 行，其余不变。详见 [DX 镜头使用 FX 影像区域](docs/dx-lens-fx.md)。（本条中文由 AI 根据英文原文翻译。）
+
 ### 修改与修复
 
 - **RAW 记录菜单单元移至预拍代码区末尾。** `raw-precapture` 的 RAW 记录菜单单元（312 字节）由 0x409F9000 移至 0x409FF000，预拍单元可使用 0x409F0000–0x409FF000；菜单行为不变，其 C 档判断另含 C60（C60 RAW 见下）。（本条中文由 AI 根据英文原文翻译。）
 
 ### English
+
+**Added**
+
+- **FX image area with DX lenses.** For [issue #45](https://github.com/XinmiaoZhao/NikonFirmwarePatch/issues/45): `raw-precapture` now lets you choose FX (36×24) with an electronic DX lens attached (Z-mount DX, or F-mount DX on the FTZ), like "Auto DX crop: Off" on the D850. The camera no longer switches to DX by itself; select DX when you want it. The photo, video and time-lapse "Choose image area" items, the 8K and FX N-RAW/ProRes RAW video sizes, the image-area button functions and the PTP image-area settings are no longer locked by a DX lens. Image Dust Off ref photo stays unavailable with DX lenses, and the lens is still reported as DX (EXIF, PTP). 36 fixed byte edits (`z8dxlens/patcher.py`), no new code; in `resources/combinations.json` every profile that includes `raw-precapture` gains these 36 rows and nothing else changes. See [FX image area with DX lenses](docs/dx-lens-fx.md).
+
+**Changed and fixed**
 
 - **RAW recording menu unit moved to the end of the pre-capture cave.** The `raw-precapture` RAW recording menu unit (312 bytes) moves from 0x409F9000 to 0x409FF000, so the pre-capture unit may use 0x409F0000–0x409FF000; the menu behaves as before, and its C-mode test also covers C60 (see C60 RAW below).
 

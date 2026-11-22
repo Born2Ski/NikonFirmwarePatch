@@ -125,6 +125,10 @@ def compose(eg, features, compiler='clang', code_source='prebuilt', *, check_rec
             img.put(site-0x40160000,new,'pre-capture RAW recording menu',expect=old)
         detail['precapture']=dict(code_sha256=meta['sha256'],code_bytes=len(code),diagnostics=False,
                                   space_fallback=True,remaining_count=True,dx=True,lossless_fallback='HE*')
+        from z8dxlens.patcher import edits as dx_edits
+        dx=dx_edits(eg)
+        for e in dx:img.put(e['offset'],e['new'],e['purpose'],expect=e['old'])
+        detail['dx-lens-fx']=dict(edits=len(dx))
     if photo:
         from z8pixelshift.patcher import build_main
         code,meta=load('pixelshift',code_source,compiler)
