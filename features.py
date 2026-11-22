@@ -125,6 +125,10 @@ def compose(eg, features, compiler='clang', code_source='prebuilt', *, check_rec
             img.put(site-0x40160000,new,'pre-capture RAW recording menu',expect=old)
         detail['precapture']=dict(code_sha256=meta['sha256'],code_bytes=len(code),diagnostics=False,
                                   space_fallback=True,remaining_count=True,dx=True,lossless_fallback='HE*')
+        from z8precapture.patcher import label_edits
+        lab=label_edits(eg)
+        for e in lab:img.put(e['offset'],e['new'],e['purpose'],expect=e['old'])
+        detail['c15-label']=dict(edits=len(lab))
         from z8dxlens.patcher import edits as dx_edits
         dx=dx_edits(eg)
         for e in dx:img.put(e['offset'],e['new'],e['purpose'],expect=e['old'])
