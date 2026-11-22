@@ -31,6 +31,8 @@
  * sequence); the photo-frame selector keeps 2 of every 3 frames in FX (alternately 33 and 67 ms apart) and every 3rd in DX (50 ms). The
  * pre-release counts follow (0.3/0.5/1 s = 6/10/20 frames), and RAW-only C15 bursts decode only some frames in HE too
  * (an FX HE decode, ~70 ms, is slower than the 50 ms frame interval).
+ * HN25: the NEF's MakerNote 0x0034 (ShutterMode) is 0x10 (electronic), as in a normal Z8 NEF, not the high-speed frame
+ * capture value 0x60, with which in-camera NEF (RAW) processing restarts the camera.
  * Public adapter: no card configuration, diagnostic footer off by default. */
 typedef unsigned char u8;
 typedef unsigned short u16;
@@ -258,7 +260,7 @@ static const u8 type_size[13] = {0,1,1,2,4,8,1,1,2,4,8,4,8};
  * PrimaryChromaticities, 0x0211 YCbCrCoefficients; Exif 0xa500 Gamma; MakerNote 0x0050 (with 0x0016, 0x0035, 0x00a2). */
 static const u16 skip0[] = {0x00fe,0x0103,0x013e,0x013f,0x014a,0x0201,0x0202,0x0211,0x0214,0x02bc,0x8769,0x8825,0x9003,0x9216};
 static const u16 skipx[] = {0x9000,0x9101,0x9102,0xa000,0xa001,0xa002,0xa003,0xa005,0xa500,0x927c};
-static const u16 skipm[] = {0x0004,0x0011,0x0016,0x0035,0x003d,0x0044,0x0045,0x0046,0x0050,0x0051,0x0058,0x008c,0x00a2,0x00a4};
+static const u16 skipm[] = {0x0004,0x0011,0x0016,0x0034,0x0035,0x003d,0x0044,0x0045,0x0046,0x0050,0x0051,0x0058,0x008c,0x00a2,0x00a4};
 /* HN15: MakerNote 0x00a4 of a NEF, the constant of leaf 0x406ec54c. */
 static const u8 mn_a4[4] = {'0','5','0','1'};
 /* HN15: NEFInfo blocks taken from the stock leaves, by tag. */
@@ -266,6 +268,10 @@ static const u8 ni_tag[8] = {0x05,0x06,0x07,0x0c,0x10,0x11,0x12,0x13};
 static const u32 ni_leaf[8] = {0x406e7010u,0x406e70c0u,0x406e7170u,0x406e7510u,0x406e78a4u,0x406e795cu,0x406e7a24u,0x406e7bb8u};
 /* MakerNote 0x0044 of a NEF: the camera's writer 0x406e9b30 gives 1 or 3 only to JPEG kinds, 0 to a NEF. */
 static const u8 jpgc_nef[2] = {0,0};
+/* HN25: MakerNote 0x0034 (ShutterMode) of a NEF. The high-speed frame capture header carries 0x60 (electronic, high
+ * speed), which stock firmware never writes into a NEF; Retouch > NEF (RAW) processing of a NEF with that value restarts
+ * the camera (a normal Z8 NEF with only this value changed does too). A normal Z8 NEF has 0x10 (electronic). */
+static const u8 shutter_nef[2] = {0x10,0};
 static const u32 crc_table[256] = {
 #include "crc32_table.inc"
 };
@@ -1480,6 +1486,7 @@ static int build(out_t *w,const u8 *h,u32 hl,const u32 *hlen,u64 m,lay_t *L,u32 
     fix56(t,n,flags,v+384);                                               /* 0x0056  v+384 (free: NEFInfo uses v+0..v+272, v+512..) */
     add(t,&n,0x0004,2,8,quality_raw);
     add(t,&n,0x0044,3,1,jpgc_nef);
+    add(t,&n,0x0034,3,1,shutter_nef);                                      /* HN25 */
     e=add(t,&n,0x0011,4,1,0); if(!e) return 0; e->slot=P_MNPV;
     add(t,&n,0x003d,3,4,v); add(t,&n,0x0045,3,4,v+8); add(t,&n,0x0046,3,2,v+80); add(t,&n,0x0051,7,24,m51);
     if(cc) add(t,&n,0x008c,7,578,cc);
