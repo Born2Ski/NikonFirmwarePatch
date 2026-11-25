@@ -27,11 +27,17 @@
  * HN18..HN21 skips apply as they are. Added: mode 5 in the mode tests, the record's 512 bytes on C60's E request, DX-sized
  * E classes (C15/C30 use FX-sized E even for DX), the DX HE* E for hooks E and S, up to 60 pre-release frames (1 s at
  * 60 fps), and partial decoding of RAW-only C60 bursts in HE* (every 4th frame) and HE (every 3rd).
+ * HN24: C15 takes 20 photos per second instead of 15. The sensor rate stays stock (FX 30 fps, DX 60 fps in a C15
+ * sequence); the photo-frame selector keeps 2 of every 3 frames in FX (alternately 33 and 67 ms apart) and every 3rd in DX (50 ms). The
+ * pre-release counts follow (0.3/0.5/1 s = 6/10/20 frames), and with Turbo RAW On (HN26) RAW-only C15 bursts decode only
+ * some frames in HE too (an FX HE decode, ~70 ms, is slower than the 50 ms frame interval).
  * HN25: the NEF's MakerNote 0x0034 (ShutterMode) is 0x10 (electronic), as in a normal Z8 NEF, not the high-speed frame
  * capture value 0x60, with which in-camera NEF (RAW) processing restarts the camera.
  * HN26: HN18's partial decoding (and with it HN19..HN21, which act only on skipped frames) runs only while Turbo RAW
  * (Photo shooting menu, z8precapture/menu) is On; Off decodes every frame. The setting is a spare byte of settings group
  * 1Eh, saved with the group: 0 = never set (TURBO_DEFAULT, Off unless built otherwise), 1 = Off, 2 = On.
+ * HN27: "Turbo RAW" as a fifth Auto series playback speed: plays a series back in real time and shows only the frames
+ * HN18 decodes (every N-th frame, N from the current settings, at N frame intervals per step).
  * Public adapter: no card configuration, diagnostic footer off by default. */
 typedef unsigned char u8;
 typedef unsigned short u16;
@@ -132,6 +138,7 @@ typedef long s64;
 #define OLD_ALLOCATION_DX_HS (PAYLOAD_DX_HS+(OLD_ALLOCATION_DX-PAYLOAD_DX))   /* 0xbb2e00 */
 #define NEW_ALLOCATION_DX_HS (OLD_ALLOCATION_DX_HS+0x200u)
 #define MODE_C60 5u                 /* HSFC release mode (G_MODE, record +0x20) */
+#define MODE_C15 6u                 /* HN24 */
 #define HISTORY_MAX 30u             /* pre-release frames a burst may drain: 1 s at 30 fps ... */
 #define HISTORY_MAX_C60 60u         /* ... and at 60 fps (HN23) */
 #define WORK_BYTES 0x40000u        /* one heap block per NEF, freed before return */
@@ -591,9 +598,10 @@ __attribute__((used)) u32 hn5_tdec_sel(u64 r) {
      * the newest submitted one (its shot number M+0x2508 equals this burst's count plus the running total: true for
      * the newest frame during the burst and for the last frame after the burst end resets the count).
      * HN23: in C60 also HE (the DX HE decode, ~30 ms, is slower than the 16.7 ms frame interval), with its own N.
+     * HN24: in C15 (20 fps) also HE, with the N of the geometry.
      * HN26: only while Turbo RAW is On. */
     if(turbo_on() && e && (q=bound(r,e,Q_MARKED)) && (get32(q+A_VALUE)&0xffu)==13u &&
-       (sel==4 || get32(q+0x20)==MODE_C60)) {
+       (sel==4 || get32(q+0x20)==MODE_C60 || get32(q+0x20)==MODE_C15)) {
         u32 dims=LOAD32(e+0x38),seq=get32(q+0x18),n; u64 m=LOAD64(r+0x790);
         if(get32(q+0x20)==MODE_C60) n=sel==4?N_C60_HS:N_C60_HE;
         else n=dims==FX_DIMS?N_FX:N_DX;
@@ -624,6 +632,25 @@ __asm__(".pushsection .text.hn5stub,\"ax\",%progbits\n"
  *   cmp w0,#6; b.ne ret; cmp w1,#1; mov w8,#5; cinc w8,w8,ne; cmp w1,#0; mov w9,#3; csel w0,w9,w8,eq; ret
  * i.e. C15 FX -> 3, C15 DX -> 5, C15 other -> 6, every other mode unchanged. Its first instruction becomes a branch here
  * (x30 is still the caller's); the C30 clause adds C30 DX -> 5. Same registers as the original (w0, w8, w9). */
+/* F (HN24). Original: bl 0x40f84ecc(w0 = rate index state+0x3b4, w1 = release mode state+0x48) at 0x40f807bc and
+ * 0x40f80a2c, the HSFC photo-frame selector: 1 (not a photo) unless the sensor-frame counter 0xa03bc2cdc (0 at the
+ * sequence start, +1 after each of these calls; nothing else reads it) is a multiple of fps[index] / {30,120,60,15}[mode-3].
+ * A C15 sequence runs the sensor at 30 fps in FX (every 2nd frame a photo) and 60 fps in DX (every 4th). For C15 the
+ * selection here gives 20 photos per second: FX 2 of every 3 frames, DX (60 fps) every 3rd, every frame at 20 fps or
+ * less; other modes stay stock. */
+#define FRAME_SELECT ((u32 (*)(u32,u32))0x40f84eccul)
+#define RATE_FPS ((u32 (*)(u32))0x40f9511cul)       /* rate index -> integer fps (table 0xa029c9e40), 0 above 9 */
+#define G_FRAMES 0xa03bc2cdcul
+#define C15_FPS 20u
+__attribute__((used)) u32 precapture_frame_skip(u32 index,u32 mode) {
+    if(mode==MODE_C15) {
+        u32 fps=RATE_FPS(index),n=LOAD32(G_FRAMES);
+        if(fps==30u) return n%3u==2u;
+        if(fps<=C15_FPS) return 0;
+        return n%(fps/C15_FPS)!=0u;
+    }
+    return FRAME_SELECT(index,mode);
+}
 __asm__(".pushsection .text.hn13stub,\"ax\",%progbits\n"
         ".global precapture_area_mode\n.type precapture_area_mode,%function\n"
         "precapture_area_mode:\n"
@@ -1978,4 +2005,139 @@ __attribute__((used)) u32 precapture_write_file(u32 op,u32 mode,u64 J) {
     if(op==0 && mode==0 && dual_second(J,&jb)) return second(&jb,J);    /* HN7R */
     if(op!=0 || !eligible(J,mode,&jb)) return ORIG_WRITE(op,mode,J);
     return take(&jb,J);
+}
+
+/* HN27: Turbo RAW review, a fifth Auto series playback speed (Playback menu > Series playback > Auto series playback
+ * options > Auto series playback speed, state 0x275; stock rows 5 fps, 15 fps, 30 fps, At current release mode speed =
+ * setting 6408h values 2, 3, 4, 1). Chosen, a series plays back in real time and shows only the frames HN18 decodes:
+ * each tick of the auto playback timer (GUI timer 0x38, tick handler 0x40632250) advances N frames instead of one
+ * (N file numbers on, within the series), and the timer runs N frame intervals of the current
+ * release mode. N follows the current settings as HN18/HN23/HN24
+ * use them (Turbo RAW On, RAW only, C15/C30/C60, FX/DX, HE/HE*); settings that decode every frame give N = 1. Frames
+ * 1, 1 + N, 1 + 2N ... of a burst are always decoded, and so is the last one, where the last step stops. A step under
+ * 33 ms (the stock 30 fps limit) takes N more frames. Outside C15/C30/C60 it plays like At current release mode speed.
+ * The choice is a spare byte of settings group 1Eh (after the Turbo RAW byte, saved with the group), 1 = chosen;
+ * setting 6408h keeps its stock value, so the stock options, a later stock firmware and PTP never see a new value. */
+#define REVIEW_BYTE 0xa03d732a7ul    /* spare byte 3 after setting 1E50h (0xa03d732a6 stays free for RAW extras) */
+#define REVIEW_ITEM 0x4e08u          /* above 0x4b98: outside the menu's per-item arrays, never greyed */
+#define REVIEW_ICON 3384u            /* PNG table 0x431d96d0: "RAW", 72 x 36 like the stock speed icons */
+#define REVIEW_LABEL 3250u           /* "Turbo RAW" (Turbo RAW row label, z8patch.shared turbo-raw) */
+#define SPEED_ACTION ((void (*)(u64))0x405932d4ul)          /* stock OK action of the speed rows */
+#define SPEED_ENTRY ((void (*)(u64))0x4059325cul)           /* stock entry callback of state 0x275 */
+#define MENU_RETURNING ((u32 (*)(void))0x403ae0f8ul)
+#define MENU_CURSOR ((void (*)(u64,u32))0x403b0048ul)
+#define MENU_SELECTED ((void (*)(u64,u32,u32))0x403b00b8ul)
+#define NODE_IMAGE ((u32 (*)(u64,u32))0x403f645cul)
+#define GUI_SET ((void (*)(u32,u32))0x403ec3a0ul)
+#define PLAY_MOVE ((u32 (*)(u32))0x4061c658ul)            /* the playback's general move by w0 images */
+#define ID_PLAY_IMAGE 0x4910u                              /* the image on screen */
+#define SERIES_INTERVAL ((u32 (*)(void))0x4063e348ul)       /* stock tick interval (ms) from setting 6408h */
+#define ID_GPHOTO 0x2200u
+#define ID_GRELMODE 0x2126u
+#define ID_GAREA 0x2124u                                    /* HSFC image area: 0 FX, 1 DX */
+__attribute__((used)) const u32 precapture_review_rows[5*11] = {
+    0x977u, 0xffffu, 0xffffu, 0, 0x101001u, 0xdbbu, 0x380au, 0x50005u, 0xffffffffu, 0xffffffffu, 2,    /* 5 fps */
+    0x978u, 0xffffu, 0xffffu, 0, 0x101001u, 0x147eu, 0x380bu, 0x50005u, 0xffffffffu, 0xffffffffu, 2,   /* 15 fps */
+    0x979u, 0xffffu, 0xffffu, 0, 0x101001u, 0x17e3u, 0x380cu, 0x50005u, 0xffffffffu, 0xffffffffu, 2,   /* 30 fps */
+    0x95cu, 0xffffu, 0xffffu, 0, 0x101001u, 0x17e2u, 0x380du, 0x50005u, 0xffffffffu, 0xffffffffu, 2,   /* release mode */
+    REVIEW_LABEL, 0xffffu, 0xffffu, 0, 0x101001u, REVIEW_ICON, REVIEW_ITEM, 0x50005u, 0xffffffffu, 0xffffffffu, 2,
+};
+__attribute__((used)) const u64 precapture_review_events[5] = {   /* the stock rows' shared transition table */
+    0x43d53e88ul, 0x43d53e88ul, 0x43d53e88ul, 0x43d53e88ul, 0x43d53e88ul,
+};
+static int review_on(void) { return LOAD8(REVIEW_BYTE)==1u; }
+/* N and the burst rate the current settings give (0 outside C15/C30/C60), as hn5_tdec_sel decides per frame. */
+static u32 review_plan(u32 *fps) {
+    u32 mode=LOAD32(G_RELMODE),area,n=1u;
+    if(LOAD32(G_PHOTO)!=1u) return 0;
+    if(mode==3u) *fps=30u; else if(mode==MODE_C60) *fps=60u; else if(mode==MODE_C15) *fps=C15_FPS; else return 0;
+    if(turbo_on() && LOAD32(G_QTYPE)==1u) {
+        area=GUI_GET(ID_GAREA);
+        if(mode==MODE_C60) n=rawrec_hs()?N_C60_HS:N_C60_HE;
+        else if((mode==MODE_C15 || rawrec_hs()) && area<=1u) n=area?N_DX:N_FX;
+    }
+    return n;
+}
+static u32 review_steps(u32 n,u32 fps) { u32 s=n; while(1000u*s<33u*fps) s+=n; return s; }
+/* 0x4063e348 for setting value 1 (At current release mode speed). */
+static u32 review_release_interval(void) {
+    u32 mode;
+    if((GUI_GET(ID_GPHOTO)|2u)!=3u) return 333u;
+    mode=GUI_GET(ID_GRELMODE);
+    return mode==0u?200u:mode<=2u?100u:33u;
+}
+/* Original: bl 0x4063e348 at 0x4061c898 (auto playback start) and 0x406322dc (tick handler). */
+__attribute__((used)) u32 precapture_review_interval(void) {
+    u32 fps=0,n;
+    if(!review_on()) return SERIES_INTERVAL();
+    if(!(n=review_plan(&fps))) return review_release_interval();
+    return (1000u*review_steps(n,fps)+fps/2u)/fps;
+}
+/* Original: mov w0,#1; b 0x4061c658 at 0x40632308/0x40632310, the tick handler's usual branch (flag 0xa03384da4 clear;
+ * the other branch, 0x40632288, is the Loop playback restart): the playback's general move by w0 images, relative to
+ * the image on screen (property 0x4910). Inside a series it only moves by one (r8: a count of N fails); showing an image
+ * directly (0x40634d6c(image, 0, 2, ...)) leaves the series view (r10). Playback images are DCF ids (0x4086cd04: bits
+ * 29-30 card, 19-28 folder, 5-18 file number, 0-3 type) and a burst's frames are consecutive file numbers of one folder.
+ * Camera log (d1, two 60-frame C30 series 1496-1555 and 1556-1615): request 0x58 (0x403fb620) = {previous image, next
+ * image, list first, list last} (the card's 1496/1615, as 0xa033808d0/d4), for any image; request 0x5a (0x403fb800) with
+ * (1, 1) = the next series' first image (1556 for every frame of series 1), with (0, 1) = this series' first (0 at it),
+ * with a count of 2 = 0. With Turbo RAW review: property 0x4910 is written (0x41015d6c: the setter's store, without its
+ * change notification, which showed that frame: r11-r16 gray flashes) with the frame before the target (N file numbers
+ * on, at most the series' last image = the next series' first - 1, or the list's last for the card's last series), then
+ * the stock move by one shows the target and restarts the timer. At the series' last image the stock series end sequence
+ * of 0x4061c658 runs here (after the repositioning its pre-move check no longer ends the playback: r13; r14: stops
+ * normally). Not a series image or an unexpected answer: the stock move. */
+#define SERIES_INFO ((u32 (*)(u32,u32 *))0x403fb620ul)     /* request 0x58: {prev, next, list first, list last}, 1 if known */
+#define SERIES_STEP ((u32 (*)(u32,u32,u32))0x403fb800ul)   /* request 0x5a: (image, 1, 1) = next series' first image */
+#define PROP_STORE ((u32 (*)(u32,u32,u8 *))0x41015d6cul)   /* (id, value, &changed): the property store, no notification */
+#define DCF_FILE(h) (((h)>>5)&0x3fffu)
+#define DCF_REST(h) ((h)&~(0x3fffu<<5))
+#define PLAY_MODE ((u32 (*)(void))0x40634758ul)            /* [0xa033808dc] */
+#define PLAY_END_NOTE ((void (*)(u32))0x4061c580ul)
+#define PLAY_END_UI ((void (*)(void))0x40682654ul)
+#define AUTO_STOP ((void (*)(void))0x4063e14cul)            /* state 0, timer 0x38 off */
+#define AUTO_ARM ((void (*)(void))0x4063de1cul)             /* re-arm if the screen allows it (0x4063de9c) */
+__attribute__((used)) u32 precapture_review_advance(u32 count) {
+    u32 fps=0,n,image,last,next,at,before,end,info[4]={0,0,0,0}; u8 changed=0;
+    if(count!=1u || !review_on() || !(n=review_plan(&fps))) return PLAY_MOVE(count);
+    image=GUI_GET(ID_PLAY_IMAGE);
+    if(!image || !SERIES_INFO(image,info) || !info[3]) return PLAY_MOVE(count);
+    last=info[3];                                          /* the list's last image */
+    if(DCF_REST(image)!=DCF_REST(last) || DCF_FILE(image)>DCF_FILE(last)) return PLAY_MOVE(count);
+    end=DCF_FILE(last);
+    next=SERIES_STEP(image,1u,1u);                         /* the next series' first image */
+    if(next && DCF_REST(next)==DCF_REST(image) && DCF_FILE(next)>DCF_FILE(image) && DCF_FILE(next)-1u<end) end=DCF_FILE(next)-1u;
+    if(DCF_FILE(image)>=end) {  /* the stock series end, 0x4061c708..0x4061c748 (pre-move check 0x406326b8 gave 0) */
+        if(PLAY_MODE()==2u) PLAY_END_NOTE(0x166u);
+        PLAY_END_UI(); AUTO_STOP(); AUTO_ARM();
+        return 1;
+    }
+    at=DCF_FILE(image)+review_steps(n,fps);
+    if(at>end) at=end;
+    if(at-1u>DCF_FILE(image)) {
+        before=DCF_REST(image)|(at-1u)<<5;
+        info[0]=info[1]=info[2]=info[3]=0;
+        if(SERIES_INFO(before,info) && info[3]) PROP_STORE(ID_PLAY_IMAGE,before,&changed);
+    }
+    return PLAY_MOVE(count);
+}
+/* State 0x275 entry callback (stock 0x4059325c): cursor and selection mark on the chosen row. */
+__attribute__((used)) void precapture_review_entry(u64 menu) {
+    if(!review_on()) { SPEED_ENTRY(menu); return; }
+    if(MENU_RETURNING()!=1u) MENU_CURSOR(menu,REVIEW_ITEM);
+    MENU_SELECTED(menu,REVIEW_ITEM,1u);
+}
+/* OK, right and touch on a speed row (stock 0x405932d4, which sets 6408h from the row under the cursor). */
+__attribute__((used)) void precapture_review_action(u64 req) {
+    if(req) {
+        u64 menu=LOAD64(req),page=LOAD64(menu+0x50);
+        u32 row=(u32)LOAD16(menu+0x58)+LOAD16(menu+0x32),item=LOAD32(LOAD64(page+0x10)+44ul*row+0x18);
+        STORE8(REVIEW_BYTE,item==REVIEW_ITEM?1u:0u);
+        if(item==REVIEW_ITEM) return;
+    }
+    SPEED_ACTION(req);
+}
+/* Original: b 0x403f645c(node, icon) at 0x40593184, the speed row's value icon in the options page refresh. */
+__attribute__((used)) u32 precapture_review_icon(u64 node,u32 icon) {
+    return NODE_IMAGE(node,review_on()?REVIEW_ICON:icon);
 }

@@ -3,6 +3,11 @@ import struct
 from z8prores.package import require
 BASE=0x40160000
 
+def c20(symbols):
+    """HN24 is built into the unit: C15 at 20 fps, its pre-release counts, label and icons."""
+    return 'precapture_frame_skip' in symbols
+
+
 def edits(code, symbols):
     entries = {k: int(v['va'], 16) for k, v in symbols.items()}
 
@@ -46,6 +51,10 @@ def edits(code, symbols):
         (0x40d424f0, 'precapture_ui_mode'),
     ):
         values[at - 0x40160000] = bl(at, entries[entry])
+    if c20(symbols):                               # HN24 (C15 at 20 fps) only when the unit carries the frame selector
+        values[0x4cd59f0] = struct.pack('<3I', 6, 10, 20)    # C15 pre-release frames for 0.3/0.5/1 s (stock 5, 8, 15)
+        for at in (0x40f807bc, 0x40f80a2c):                  # photo-frame selector calls
+            values[at - 0x40160000] = bl(at, entries['precapture_frame_skip'])
     for at in (0x40ec4640, 0x40ec6a8c, 0x40f24e08, 0x41014b1c, 0x410e71f8):
         values[at - 0x40160000] = branch(at, entries['precapture_cap_update'], tail=at == 0x40ec4640)
     # These are callback pointers in the initialized-data image, not AArch64 branches.
@@ -68,3 +77,98 @@ def edits(code, symbols):
     values[0x70E918]=struct.pack('<I',0xF2A00002|((ids>>16)<<5))
     values[0x70E94C]=struct.pack('<I',0x52800003|(9<<5))
     return [dict(offset=at,new=raw,purpose='pre-capture code' if at==0x890000 else 'pre-capture hook/data '+hex(at)) for at,raw in sorted(values.items())]
+
+
+# HN24: C15 takes 20 photos per second, so its release-mode label (UI string 2371, "C15" in every language; Arabic has
+# a right-to-left mark in front) reads "C20". Same length: the two digits are replaced in place in each language's text.
+LANG_TABLES, LANG_TEXT, C15_LABEL = 0x311C5A0, 0x387AF58, 2371   # EG offsets of the 36 offset-table / text pointers
+ICON_15, ICON_20 = 2650, 2670   # PNG table 0x431d96d0 indexes: frames symbol with 15 / with 20 (64x32 icon set)
+# (EG offset, format, record {index, kind 1 = image} before the value or None, where)
+ICONS = (
+    (0x4BC0646, '<H', None, 'release-mode icon list RAM 0xa028b5640 [S, CL, CH, C15, C30, C60, C120], entry 3'),
+    (0x4B8B698, '<I', (3, 1), 'release-mode selection options RAM 0xa02880660, option 3'),
+    (0x4B7DC90, '<I', (13, 1), 'shooting-display release-mode icons RAM 0xa02872700, code 13'),
+)
+# The shooting display draws the high-speed modes from (outlined 68x36, plain 64x32) image pairs [C15, C30, C60, C120] at
+# VA 0x42ae7984 (read-only data; the CH speeds have their own pairs earlier in the same table). C15's pair -> the 20 icons.
+PAIRS = 0x2987986                                               # EG offset of C15's pair
+PAIRS_STOCK = (2713, 2650, 2708, 2643, 5929, 5930, 2709, 2644)   # C15, C30, C60, C120 (outlined, plain)
+PAIR_20 = (2714, 2670)
+
+
+def label_edits(eg):
+    out, seen = [], set()
+    for language in range(36):
+        table = struct.unpack_from('<Q', eg, LANG_TABLES + 8 * language)[0] - BASE
+        text = struct.unpack_from('<Q', eg, LANG_TEXT + 8 * language)[0] - BASE
+        start, end = struct.unpack_from('<2i', eg, table + 4 * C15_LABEL)
+        label = eg[text + start:text + end]
+        at = label.find('C15'.encode('utf-16le'))
+        require(at >= 0 and at % 2 == 0 and label.decode('utf-16le').lstrip('\u202b') == 'C15',
+                f'C15 label: unexpected stock text in language {language}')
+        offset = text + start + at + 2
+        if offset in seen:
+            continue
+        seen.add(offset)
+        out.append(dict(offset=offset, old='15'.encode('utf-16le'), new='20'.encode('utf-16le'),
+                        purpose=f'pre-capture: C15 label reads C20 (language {language})'))
+    # The release-mode icon of C15 is the frames symbol with "15" (image 2650 of the 64x32 set, shared with CH 15 fps); the
+    # same set has the frames symbol with "20" (image 2670, CH 20 fps). Only C15's own references change; CH keeps its own.
+    for off, fmt, ident, why in ICONS:
+        require(eg[off - 8:off] == struct.pack('<2I', *ident) if ident else True, f'C15 icon: unexpected record at {off:#x}')
+        require(struct.unpack_from(fmt, eg, off)[0] == ICON_15, f'C15 icon: unexpected stock image at {off:#x}')
+        out.append(dict(offset=off, old=struct.pack(fmt, ICON_15), new=struct.pack(fmt, ICON_20),
+                        purpose='pre-capture: C15 icon shows 20 (' + why + ')'))
+    require(struct.unpack_from('<8H', eg, PAIRS) == PAIRS_STOCK, 'C15 icon: unexpected shooting-display pair table')
+    out.append(dict(offset=PAIRS, old=struct.pack('<2H', *PAIRS_STOCK[:2]), new=struct.pack('<2H', *PAIR_20),
+                    purpose='pre-capture: C15 icon shows 20 (shooting-display icon pairs VA 0x42ae7984, outlined + plain)'))
+    return out
+
+
+# HN27: Turbo RAW review, a fifth row on the Auto series playback speed page (state 0x275) and the playback hooks.
+SPEED_PAGE = 0x4BD45A0               # EG offset of the page record (initialized data, RAM 0xa028c95a0): +0x10 rows, events, count
+SPEED_ROWS, SPEED_EVENTS, SPEED_TABLE = 0x43D405AC, 0x43D40660, 0x43D53E88
+SPEED_ENTRY_CB = 0x4BF7A48           # EG offset of state 0x275's callbacks (RAM 0xa028eca48) +0: entry 0x4059325c
+SPEED_ACTION = 0x405932D4            # OK/right/touch action of the speed rows in their shared table
+SPEED_ACTION_EVENTS = (0x286, 0x28B, 0x2AE)
+
+
+def review_edits(eg, code, symbols):
+    entries = {k: int(v['va'], 16) for k, v in symbols.items()}
+
+    def branch(at, to, tail=False):
+        d = to - at
+        require(d % 4 == 0 and -(1 << 27) <= d < (1 << 27), 'Branch target out of range')
+        return struct.pack('<I', (0x14000000 if tail else 0x94000000) | ((d // 4) & 0x3ffffff))
+
+    rows, events = entries['precapture_review_rows'], entries['precapture_review_events']
+    blob = code[rows - 0x409F0000:rows - 0x409F0000 + 5 * 44]
+    require(blob[:4 * 44] == eg[SPEED_ROWS - BASE:SPEED_ROWS - BASE + 4 * 44], 'Turbo RAW review: stock speed rows differ')
+    require(struct.unpack_from('<11I', blob, 4 * 44)[6] == 0x4E08 and
+            struct.unpack_from('<5Q', code, events - 0x409F0000) == (SPEED_TABLE,) * 5 and
+            struct.unpack_from('<4Q', eg, SPEED_EVENTS - BASE) == (SPEED_TABLE,) * 4, 'Turbo RAW review: row data')
+    out = [dict(offset=SPEED_PAGE + 0x10, old=struct.pack('<QQH', SPEED_ROWS, SPEED_EVENTS, 4),
+                new=struct.pack('<QQH', rows, events, 5), purpose='pre-capture HN27: speed page rows (+ Turbo RAW), count 5'),
+           dict(offset=SPEED_ENTRY_CB, old=struct.pack('<Q', 0x4059325C), new=struct.pack('<Q', entries['precapture_review_entry']),
+                purpose='pre-capture HN27: speed page entry callback')]
+    seen = []
+    for k in range(32):
+        at = SPEED_TABLE - BASE + 32 * k
+        event, action = struct.unpack_from('<2Q', eg, at)
+        if event == 0x3BB:
+            break
+        if action == SPEED_ACTION:
+            seen.append(event)
+            out.append(dict(offset=at + 8, old=struct.pack('<Q', SPEED_ACTION), new=struct.pack('<Q', entries['precapture_review_action']),
+                            purpose=f'pre-capture HN27: speed row action (event {event:#x})'))
+    require(tuple(seen) == SPEED_ACTION_EVENTS, 'Turbo RAW review: unexpected speed row transitions')
+    for at, old_to, entry, tail, why in (
+            (0x40593184, 0x403F645C, 'precapture_review_icon', True, 'speed value icon in the options page refresh'),
+            (0x40632310, 0x4061C658, 'precapture_review_advance', True, 'image move in the auto playback tick (usual branch)'),
+            (0x4061C898, 0x4063E348, 'precapture_review_interval', False, 'auto playback start interval'),
+            (0x406322DC, 0x4063E348, 'precapture_review_interval', False, 'auto playback tick interval')):
+        out.append(dict(offset=at - BASE, old=branch(at, old_to, tail), new=branch(at, entries[entry], tail),
+                        purpose='pre-capture HN27: ' + why))
+    for e in out:
+        require(eg[e['offset']:e['offset'] + len(e['old'])] == e['old'], f"Turbo RAW review: unexpected stock bytes at {e['offset']:#x}")
+    return out
