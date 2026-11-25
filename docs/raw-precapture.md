@@ -8,19 +8,24 @@
 
 `--features raw-precapture` 让 C15／C30／C60 的预拍历史帧和正式帧按普通“画质”设置输出 RAW／RAW+JPEG／JPEG，使用“RAW 记录”选择 HE／HE★。QUAL／f2、i 菜单和取景画质标识使用相同的普通画质设置。预拍不支持无损压缩：C15／C30／C60 中无损选项禁用，普通拍照保存的无损按高效率★记录。在 C15／C30／C60 中按分配了“图像品质/尺寸”的按键时，尺寸固定为 L，M／S 灰显。
 
+C15 改为每秒 20 张，菜单、i 菜单、释放模式选择和拍摄画面中显示为 **C20**：传感器帧率保持原厂 C15 的设置，FX 下以每秒 30 帧运行并每 3 帧取 2 帧作为照片，DX 下以每秒 60 帧运行并每第 3 帧为照片；取景与对焦保持原厂 C15 的帧率。（本条中文由 AI 根据英文原文翻译。）
+
+同一构建还包括[释放模式随照片拍摄菜单库切换](release-mode-banks.md)（含预拍连拍与释放后连拍）和 [DX 镜头使用 FX 影像区域](dx-lens-fx.md)。（本条中文由 AI 根据英文原文翻译。）
+
 ### 支持范围
 
 支持**照片模式、FX/DX、全尺寸 L、C15／C30／C60、HE 或 HE★**，C60 始终记录 DX 区域。JPEG 支持精细／标准／基本及 ★。不支持真正无损 RAW、C120 RAW、HLG/HEIF 或副卡独立 JPEG 尺寸计划。
 
-缓存完整时，预拍 0.3／1 秒在 C15 最多保存 5／15 帧，在 C30 最多保存 9／30 帧，在 C60 最多保存 18／60 帧。30 帧（C60 为 60 帧）是历史窗口上限，不是整次连拍上限；关闭预拍时，正式帧仍使用所选格式。
+缓存完整时，预拍 0.3／1 秒在 C20（原 C15）最多保存 6／20 帧（0.5 秒为 10 帧），在 C30 最多保存 9／30 帧，在 C60 最多保存 18／60 帧。30 帧（C60 为 60 帧）是历史窗口上限，不是整次连拍上限；关闭预拍时，正式帧仍使用所选格式。
 
 ### 使用步骤
 
-1. 选择 FX/L 或 DX/L 和 C15、C30 或 C60（C60 始终记录 DX）。
+1. 选择 FX/L 或 DX/L 和 C20（原 C15）、C30 或 C60（C60 始终记录 DX）。
 2. 在普通“画质”中选择文件类型、JPEG 档位和 ★；在“RAW 记录”中选择 HE／HE★。
 3. 设置预拍时长、后拍上限、主卡槽及副卡槽功能。无需 `Z8PRE.CFG`，旧配置文件不再读取。
 4. 半按填充预拍缓存，再全按拍摄。等写入结束后再更换卡或调整文件格式。
-5. 需要更长的仅 RAW 连拍时，在“照片拍摄菜单”第三行（“扩展菜单库”之下）打开 **Turbo RAW**（默认关闭）。开启后仅 RAW 连拍只解码部分帧：C15／C30 的 HE★（FX 每 5 帧、DX 每 3 帧）与 C60（HE★ 每 4 帧、HE 每 3 帧），另加首帧和最新一帧；其余帧带生成的灰色预览，也跳过主 JPEG 编码与显像处理，因此连拍更长。RAW 数据不受影响；RAW+JPEG 与 JPEG 不变。关闭时每帧都解码，预览均为真实图像。（本条中文由 AI 根据英文原文翻译。）
+5. 需要更长的仅 RAW 连拍时，在“照片拍摄菜单”第三行（“扩展菜单库”之下）打开 **Turbo RAW**（默认关闭）。开启后仅 RAW 连拍只解码部分帧：C30 的 HE★ 与 C20 的 HE／HE★（FX 每 5 帧、DX 每 3 帧）与 C60（HE★ 每 4 帧、HE 每 3 帧），另加首帧和最新一帧；其余帧带生成的灰色预览，也跳过主 JPEG 编码与显像处理，因此连拍更长。RAW 数据不受影响；RAW+JPEG 与 JPEG 不变。关闭时每帧都解码，预览均为真实图像。（本条中文由 AI 根据英文原文翻译。）
+6. 回看 Turbo RAW 连拍时，在“播放菜单 › 连拍回放 › 自动连拍回放选项 › 自动连拍回放速度”中选择 **Turbo RAW**（每秒 5／15／30 张和“按当前释放模式速度”之后的第五项；选中后该行显示 RAW 图标）。在连拍组的第一张打开：自动连拍回放（或指定为“开始连拍回放”的按钮）只显示 Turbo RAW 解码的帧，并按实际时间播放：C30 FX HE★ 每 5 帧显示 1 帧，每秒 6 张（每张停留 5 个帧间隔），DX 每 3 帧，C60 每 4 帧（HE★）或 3 帧（HE），C20 FX 每 5 帧、DX 每 3 帧；播放到连拍组的最后一张停止。对每帧都解码的设置则按释放模式的速度逐帧播放（每秒最多 30 张）；C20／C30／C60 以外按“按当前释放模式速度”播放。已在 Z8 机身上测试（固件 03.12.s7）。（本条中文由 AI 根据英文原文翻译。）
 
 ### 输出与显示
 
@@ -42,8 +47,10 @@ NEF 使用原厂照片数据库与写入器，写完可直接回放，FX 输出�
 - C15/C30 中无损选项禁用，普通拍照保存的无损按高效率★记录，退出后恢复该库的无损偏好。实拍 SD 文件确认 DX 预拍使用 5392×3592 有效区。
 - 实际拍摄准入、空间预留、自动溢出和 r／缓冲显示仍按高速 JPEG 计划。数据库拒绝登记或锁失败时尝试 JPEG 回退，包括 RAW-only；该拒绝不创建停止文件。
 - RAW 帧保留到 NEF 写完，缓存写满时连拍结束；预拍帧同样占用缓存。Z8 机身配 CFexpress 卡、仅 RAW 实测（03.12.f1）：C30 HE 约 184 张，C30 HE★ 约 74 张，C15 HE★ 约 130 张，C15 HE 接近跟上拍摄速度（每秒写入 14.4 个 NEF，拍摄 15 张／秒）。C60 每帧都解码：DX HE★ 每秒 59.9 帧下一次连拍 201 张后缓存写满（每秒写入 20 个 NEF，03.12.u1）。开启 Turbo RAW 时（03.12.t1）：C30 FX HE★ 约 129 张（每秒 20.4 个 NEF），C60 DX HE★ 约 267 张（每秒 31.3 个）。需要更长连拍时请选择 HE。每张目标卡应保留充足空间。（本条中文由 AI 根据英文原文翻译。）
-- C15／C30 下，相机把每帧以 HE／HE★ 压缩 RAW 保存在缓存中，之后再解码一次以生成 NEF 内的预览 JPEG（JPEG 模式下也用于生成 JPEG 本身）。该解码每秒约处理 245 MB 压缩 RAW，因此无论存储卡多快，HE（17 MB）每秒最多约处理并写入 14 帧，HE★（29 MB）约 8.6 帧；原厂 C30 JPEG 使用 HE，受同样的限制。更快的存储卡不能延长 C15／C30 RAW 连拍。C20 不经过这一解码（同一张卡上每秒写入 12 个 HE★ NEF），其速度由存储卡决定。（本条中文由 AI 根据英文原文翻译。）
+- C15／C30 下，相机把每帧以 HE／HE★ 压缩 RAW 保存在缓存中，之后再解码一次以生成 NEF 内的预览 JPEG（JPEG 模式下也用于生成 JPEG 本身）。该解码每秒约处理 245 MB 压缩 RAW，因此无论存储卡多快，HE（17 MB）每秒最多约处理并写入 14 帧，HE★（29 MB）约 8.6 帧；原厂 C30 JPEG 使用 HE，受同样的限制。更快的存储卡不能延长 C15／C30 RAW 连拍。原厂高速连拍（CH，每秒最多 20 张）不经过这一解码（同一张卡上每秒写入 12 个 HE★ NEF），其速度由存储卡决定。（本条中文由 AI 根据英文原文翻译。）
 - 开启 Turbo RAW 时，未解码帧在相机回放和电脑上显示均匀灰色预览（放大同样为灰色），这些帧仍可在机内执行“NEF（RAW）处理”（固件 03.12.v9 实测）。用电脑 RAW 软件打开即可看到真实图像。该设置保存在设置组 1Eh 的一个空闲字节中，随该组保存，关机及取出电池后保持（固件 03.12.t1 实测）。（本条中文由 AI 根据英文原文翻译。）
+- **C20（每秒 20 张的 C15）。** FX 下照片间隔交替为 33 与 67 毫秒（每秒 30 帧中每 3 帧取 2 帧），DX 下间隔 50 毫秒。已测试 FX HE★（高速卡上一次连拍 251 张，每秒写入 20 个 NEF，固件 03.12.q2）；FX HE、DX 以及定时释放后连拍尚未测试。（本条中文由 AI 根据英文原文翻译。）
+- **Turbo RAW 回放速度**根据相机当前设置（释放模式、影像区域、RAW 记录、Turbo RAW）推算跳过的帧数，与“按当前释放模式速度”使用当前释放模式相同。更改这些设置后再回看连拍，可能停在灰色帧上或速度不对。请从连拍组的第一张开始（自动连拍回放即如此）；解码器额外解码的帧（最新一帧）会被跳过，以保持匀速。开启“循环播放”时，播放在最后一张停止，不会重新开始。该选择保存在设置组 1Eh 的一个空闲字节中；原厂的回放速度设置不改变。（本条中文由 AI 根据英文原文翻译。）
 - 机内 NEF（RAW）处理现可用于预拍 NEF（已在 Z8 机身上测试，固件 03.12.v9）。用早期构建拍摄的预拍 NEF 带有高速快门模式值（MakerNote 0x0034 = 0x60），对其执行“润饰 › NEF（RAW）处理”会使相机重启；请在电脑上处理这些文件。（本条中文由 AI 根据英文原文翻译。）
 - 实际 NEF 写入失败、写后找不到文件或达到默认 1.5 秒预算时，仍会尝试创建 `Z8PRESTP.BIN`。重启不清除停止文件；保留两卡文件并按[停止文件指南](stop-file.md)处理。停止额外 RAW 拍摄可选择 JPEG-only 或退出 C15／C30／C60。
 - NEF 头按原厂 NEF 标签表写出：六个 SubIFD、镜头校正等 NEFInfo 块（0x05–0x07、0x0C、0x10–0x13）以及 MakerNote 0x0046／0x008C／0x00A4，不再带入仅属于 JPEG 的标签。SubIFD3–5 是空占位，仍没有原厂的 384×256 灰度子图；XMP 校正数据和 MakerNote 0x0093 仍缺失；使用自定义色调曲线的优化校准时不写 ContrastCurve。这项改动（[问题 #23](https://github.com/XinmiaoZhao/NikonFirmwarePatch/issues/23)、[#27](https://github.com/XinmiaoZhao/NikonFirmwarePatch/issues/27) 的机内“NEF（RAW）处理”与元数据差异）已在 Z8 机身上测试。
@@ -55,19 +62,24 @@ NEF 使用原厂照片数据库与写入器，写完可直接回放，FX 输出�
 
 `--features raw-precapture` makes C15/C30/C60 history and post-release frames follow ordinary Image quality: RAW/RAW+JPEG/JPEG. RAW recording selects HE/HE★. QUAL/f2, the i menu and shooting-screen indicators use the same ordinary quality setting. Pre-capture has no lossless compression: C15/C30/C60 disable the lossless option and record a lossless setting saved for ordinary shooting as HE★. At C15/C30/C60 the button assigned to Image quality/size fixes the size at L and greys out M/S.
 
+C15 takes 20 photos per second and is shown as **C20** in the menus, the i menu, the release-mode selection and the shooting display. The sensor rate stays stock C15's: 30 fps in FX, where 2 of every 3 frames become photos, and 60 fps in DX, where every 3rd frame does; viewfinder and AF keep stock C15's rates.
+
+The same build includes [release mode per photo shooting menu bank](release-mode-banks.md#english) (with the pre-release and post-release burst) and [FX image area with DX lenses](dx-lens-fx.md#english).
+
 ### Supported modes
 
 Supports **photo mode, FX/DX, full-size L, C15/C30/C60 and HE or HE★**; C60 always records the DX area. JPEG supports Fine/Normal/Basic with or without ★. True lossless RAW, C120 RAW, HLG/HEIF and separately sized secondary JPEG plans are unsupported.
 
-With a full buffer, 0.3/1-second history saves up to 5/15 frames at C15, 9/30 at C30 or 18/60 at C60. The 30-frame ceiling (60 in C60) applies to history, not the entire burst. With pre-capture off, current frames still use the selected format.
+With a full buffer, 0.3/1-second history saves up to 6/20 frames at C20 (formerly C15; 10 for 0.5 s), 9/30 at C30 or 18/60 at C60. The 30-frame ceiling (60 in C60) applies to history, not the entire burst. With pre-capture off, current frames still use the selected format.
 
 ### Steps
 
-1. Select FX/L or DX/L and C15, C30 or C60 (C60 always records DX).
+1. Select FX/L or DX/L and C20 (formerly C15), C30 or C60 (C60 always records DX).
 2. Select file type, JPEG grade and ★ in ordinary Image quality; select HE/HE★ in RAW recording.
 3. Set history duration, post-release limit, primary slot and secondary-slot role. No `Z8PRE.CFG` is required; old configuration files are ignored.
 4. Half-press to fill history, then fully press to shoot. Let writing finish before changing cards or file format.
-5. For longer RAW-only bursts, turn on **Turbo RAW** in the Photo shooting menu (third row, below Extended menu banks; Off by default). On, RAW-only bursts decode only some frames: HE★ in C15/C30 (FX every 5th, DX every 3rd frame) and C60 (HE★ every 4th, HE every 3rd), plus the first and the newest frame; the other frames get generated gray previews and skip the main JPEG encode and development, so bursts last longer. The RAW data is not affected; RAW+JPEG and JPEG are unchanged. Off, every frame is decoded and has real previews.
+5. For longer RAW-only bursts, turn on **Turbo RAW** in the Photo shooting menu (third row, below Extended menu banks; Off by default). On, RAW-only bursts decode only some frames: HE★ in C30 and HE/HE★ in C20 (FX every 5th, DX every 3rd frame) and C60 (HE★ every 4th, HE every 3rd), plus the first and the newest frame; the other frames get generated gray previews and skip the main JPEG encode and development, so bursts last longer. The RAW data is not affected; RAW+JPEG and JPEG are unchanged. Off, every frame is decoded and has real previews.
+6. To review a Turbo RAW burst, choose **Turbo RAW** under Playback menu › Series playback › Auto series playback options › Auto series playback speed (a fifth choice after 5, 15 and 30 fps and At current release mode speed; the speed row then shows a RAW icon). Open a series on its first frame: auto series playback (or a button assigned to Start series playback) shows only the frames Turbo RAW decoded, in real time: every 5th frame in C30 FX HE★ at 6 per second (each shown for 5 frame intervals), every 3rd in DX, every 4th (HE★) or 3rd (HE) in C60, every 5th (FX) or 3rd (DX) in C20, and stops on the series' last frame. With settings that decode every frame it plays every frame at the release mode's rate (at most 30 per second); outside C20/C30/C60 it plays like At current release mode speed. Tested on a Z8 with firmware 03.12.s7.
 
 ### Files and display
 
@@ -89,8 +101,10 @@ Remaining counts include NEF size and refresh with file type, RAW compression, J
 - C15/C30 disable the lossless option; a saved lossless setting is recorded as HE★ and restored afterwards. Camera files confirmed the 5392×3592 active area for DX pre-capture.
 - Admission, reservations, overflow switching and r/buffer display retain the stock high-speed JPEG plan. Database/lock refusal attempts JPEG fallback, even for RAW-only; that refusal does not create a stop marker.
 - RAW buffers remain occupied until NEF writing finishes, and a burst ends when the buffer is full; pre-release frames count against it. Measured on a Z8 with a CFexpress card, RAW-only (03.12.f1): C30 HE about 184 frames, C30 HE★ about 74, C15 HE★ about 130; C15 HE nearly keeps up (14.4 NEFs written per second against 15 frames per second). In C60 every frame is decoded: DX HE★ 201 frames at 59.9 fps until the buffer is full (20 NEFs written per second, 03.12.u1). With Turbo RAW on (03.12.t1): C30 FX HE★ about 129 frames (20.4 NEFs per second), C60 DX HE★ about 267 (31.3 per second). Choose HE for longer bursts. Leave ample space on each destination card.
-- In C15/C30 the camera keeps each frame in the buffer as compressed HE/HE★ RAW and decodes it again to make the preview JPEGs in the NEF (in JPEG modes, also the JPEG itself). That decode handles about 245 MB of compressed RAW per second, so frames are developed and written at most about 14 per second with HE (17 MB) and about 8.6 per second with HE★ (29 MB), whatever the card speed; stock C30 JPEG has the same limit with HE. A faster card does not lengthen C15/C30 RAW bursts. C20 does not go through this decode (on the same card it wrote 12 HE★ NEFs per second), so there the card is the limit.
+- In C15/C30 the camera keeps each frame in the buffer as compressed HE/HE★ RAW and decodes it again to make the preview JPEGs in the NEF (in JPEG modes, also the JPEG itself). That decode handles about 245 MB of compressed RAW per second, so frames are developed and written at most about 14 per second with HE (17 MB) and about 8.6 per second with HE★ (29 MB), whatever the card speed; stock C30 JPEG has the same limit with HE. A faster card does not lengthen C15/C30 RAW bursts. Stock Continuous H (CH, up to 20 fps) does not go through this decode (on the same card it wrote 12 HE★ NEFs per second), so there the card is the limit.
 - With Turbo RAW on, frames that were not decoded show a uniform gray preview in camera playback and on a computer (also when zoomed); in-camera NEF (RAW) processing still works on them (tested with firmware 03.12.v9). A RAW converter on a computer shows the real image. The setting is kept in a spare byte of settings group 1Eh, which the camera saves with the group; it is kept after power-off and battery removal (tested with firmware 03.12.t1).
+- **C20 (C15 at 20 fps).** In FX, photos are alternately 33 and 67 ms apart (2 of every 3 frames at 30 fps); in DX they are 50 ms apart. FX HE★ was tested (251 frames in one burst at 20 NEFs per second on a fast card, firmware 03.12.q2); FX HE, DX and a timed post-release burst have not been tested.
+- **Turbo RAW review** works out how many frames were skipped from the camera's current settings (release mode, image area, RAW recording, Turbo RAW), as At current release mode speed uses the current release mode. Reviewing a burst after changing those settings can land on gray frames or play at the wrong speed. Start on the first frame of a series (auto series playback does); the extra frames the decoder adds (the newest frame) are skipped to keep a steady pace. With Loop playback On, playback stops on the last frame instead of starting again. The choice is kept in a spare saved byte of settings group 1Eh; the stock speed setting is not changed.
 - In-camera NEF (RAW) processing works for pre-capture NEFs (tested on a Z8, 03.12.v9). Pre-capture NEFs recorded with earlier builds carry the high-speed ShutterMode value (MakerNote 0x0034 = 0x60), with which Retouch › NEF (RAW) processing restarts the camera; process those files on a computer instead.
 - Failed/missing NEF writes or reaching the default 1.5-second budget still attempt to create `Z8PRESTP.BIN`. Restarting does not clear it. Preserve both cards and follow the [stop-file guide](stop-file.md#english-summary). Select JPEG-only or leave C15/C30/C60 to stop extra RAW capture.
 - NEF headers follow the stock NEF tag lists: six SubIFDs, the lens-correction and other NEFInfo blocks (0x05–0x07, 0x0C, 0x10–0x13) and MakerNote 0x0046/0x008C/0x00A4, without the JPEG-only tags. SubIFD3–5 are empty placeholders, so the stock 384×256 grayscale subimage is still absent, as are XMP correction metadata and MakerNote 0x0093. A Picture Control with a custom tone curve omits ContrastCurve. This change, made for the in-camera NEF (RAW) processing failure and metadata differences in [issue #23](https://github.com/XinmiaoZhao/NikonFirmwarePatch/issues/23) and [#27](https://github.com/XinmiaoZhao/NikonFirmwarePatch/issues/27), has been tested on a Z8.
@@ -98,4 +112,4 @@ Remaining counts include NEF size and refresh with file type, RAW compression, J
 
 ## 相关文档 / Related documents
 
-[构建与截图 / Build and screenshots](../README.md) · [已知问题 / Known issues](known-issues.md) · [验证记录 / Validation](validation.md) · [致谢与许可 / Attribution](../NOTICE.md)
+[构建与截图 / Build and screenshots](../README.md) · [释放模式随菜单库 / Release mode per bank](release-mode-banks.md) · [DX 镜头使用 FX / FX with DX lenses](dx-lens-fx.md) · [已知问题 / Known issues](known-issues.md) · [验证记录 / Validation](validation.md) · [致谢与许可 / Attribution](../NOTICE.md)

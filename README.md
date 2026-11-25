@@ -27,7 +27,7 @@ Nikon Z8 C 3.11 实验补丁的离线构建工具。提供四组可独立选择�
 | `video-recording` | N-RAW 12位 3:2（8.3K 30／25／24p，4.1K 120p 至 24p）、N-RAW 四档、反挤压显示、ProRes HQ／422／LT／Proxy 及 HQ 星标、H.265 五档码率 |
 | `log-colour` | Log 菜单选择 N-Log／BT.2020、S-Log3／S-Gamut3.Cine、Log3G10／REDWideGamutRGB，含标签、图标和显示辅助 |
 | `still-photo-tools` | SDR HEIF（10 位 `.HIF`）、4:3／2.39:1／65:24 照片裁切、机内像素位移合成 |
-| `raw-precapture` | C15/C30 RAW 预拍（FX/DX，HE／HE★，画质沿用普通菜单） |
+| `raw-precapture` | C20（原 C15）／C30／C60 RAW 预拍（FX/DX，HE／HE★，画质沿用普通菜单）、Turbo RAW 与 Turbo RAW 回放速度、释放模式随照片拍摄菜单库、DX 镜头使用 FX 影像区域（本行中文由 AI 翻译） |
 
 N-RAW 3:2 是单独的视频文件类型，ProRes 与 H.265 仍为 16:9；反挤压可关闭。SDR HEIF 与新增画幅用于普通照片。SDR HEIF 的写法针对 macOS、iPhone、Windows 11 照片和小米相册做了适配，见 [SDR HEIF 兼容性](docs/sdr-heif.md#兼容性)；新增画幅在照片菜单、i 菜单和指定的 Fn 键中均可选择。C15 至 C120 的压缩照片使用 JPEG，C15/C30 预拍沿用原有 FX/DX 和 NEF／JPEG 输出。像素位移合成需要完整的 FX 无损 NEF 组，预拍输出不适用。Log 录像使用经实拍标定的矩阵与常量 Cpxs；S-Log3 沿用原厂截零，Log3G10 录像不含 RED 的 F 映射。刷入其他固件之前，请先把照片的图像区域改回 FX。
 
@@ -114,7 +114,7 @@ python verify.py Z_8_0311.bin build/all/Z_8_0407.bin --features video-recording 
 - [ProRes](docs/prores.md)、[H.265](docs/h265.md)
 - [Log 设置与后期流程](docs/log-colour.md)、[色彩报告：中文](docs/log-colour-report.md)／[English](docs/log-colour-report.en.md)、[后期 F LUT](luts/README.md)
 - [SDR HEIF](docs/sdr-heif.md)、[照片裁切比例](docs/photo-crop.md)、[像素位移合成](docs/pixelshift.md)
-- [RAW 预拍](docs/raw-precapture.md)
+- [RAW 预拍](docs/raw-precapture.md)、[释放模式随照片拍摄菜单库](docs/release-mode-banks.md)、[DX 镜头使用 FX 影像区域](docs/dx-lens-fx.md)
 - [当前验证](docs/validation.md)、[已知问题](docs/known-issues.md)、[更新日志](CHANGELOG.md)
 
 [发布包内容和验证流程](docs/releases.md)列出维护者回归命令；构建组合回归可运行 `python tests/validate_combinations.py --stock /path/to/Z_8_0311.bin --report build/combinations.json`，需要审阅过的源码编译器。
@@ -140,7 +140,7 @@ This offline toolkit builds experimental patches for the original Nikon Z8 C 3.1
 | `video-recording` | N-RAW 12-bit 3:2 (8.3K 30/25/24p, 4.1K 120p to 24p), four N-RAW tiers, anamorphic desqueeze, ProRes HQ/422/LT/Proxy with an HQ star, five H.265 bitrates |
 | `log-colour` | N-Log / BT.2020, S-Log3 / S-Gamut3.Cine or Log3G10 / REDWideGamutRGB, with labels, icons and view assist |
 | `still-photo-tools` | SDR HEIF (10-bit `.HIF`), 4:3 / 2.39:1 / 65:24 still crops and in-camera pixel-shift merge |
-| `raw-precapture` | C15/C30 RAW pre-capture in FX/DX with HE/HE★, using the ordinary quality menu |
+| `raw-precapture` | C20 (formerly C15)/C30/C60 RAW pre-capture in FX/DX with HE/HE★, using the ordinary quality menu; Turbo RAW and the Turbo RAW review playback speed; release mode per photo shooting menu bank; FX image area with DX lenses |
 
 N-RAW 3:2 is a separate movie file type; ProRes and H.265 stay 16:9, and desqueeze can be turned off. SDR HEIF and the added image areas apply to ordinary photos. SDR HEIF is written to display correctly in macOS, iPhone, Windows 11 Photos and the Xiaomi gallery; see [SDR HEIF compatibility](docs/sdr-heif.md#compatibility). The added areas are available in the photo menu, the i menu and an assigned Fn button. C15 through C120 use JPEG for compressed photos, and C15/C30 pre-capture keeps its FX/DX and NEF/JPEG output. Pixel-shift merging requires a complete group of lossless FX NEFs, which excludes pre-capture output. Log recording uses camera-calibrated matrices and constant chroma compensation (Cpxs). S-Log3 retains stock clipping at zero; Log3G10 recording omits RED’s F mapping. Return the photo image area to FX before installing other firmware.
 
@@ -227,7 +227,7 @@ The version format is `NN.NN`; the internal tag is one lowercase letter followed
 - [ProRes](docs/prores.md) and [H.265](docs/h265.md)
 - [Log settings and grading workflow](docs/log-colour.md#english), colour report in [Chinese](docs/log-colour-report.md) or [English](docs/log-colour-report.en.md), and [F LUT for post](luts/README.md)
 - [SDR HEIF](docs/sdr-heif.md#english), [still crop ratios](docs/photo-crop.md#english) and [pixel-shift merge](docs/pixelshift.md#english)
-- [RAW pre-capture](docs/raw-precapture.md#english)
+- [RAW pre-capture](docs/raw-precapture.md#english), [release mode per photo shooting menu bank](docs/release-mode-banks.md#english) and [FX image area with DX lenses](docs/dx-lens-fx.md#english)
 - [Current validation](docs/validation.md), [known limits](docs/known-issues.md) and [changelog](CHANGELOG.md)
 
 [Release contents and verification](docs/releases.md) lists the maintainer checks. Run the combination regression with `python tests/validate_combinations.py --stock /path/to/Z_8_0311.bin --report build/combinations.json` using the reviewed source compiler.
