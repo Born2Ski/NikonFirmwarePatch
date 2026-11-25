@@ -12,51 +12,78 @@ SITES = (
 )
 MENU = 'pre-capture RAW recording menu'
 
-# Turbo RAW: Photo shooting menu row 2 (item 0x2CAA), one of the two rows the stock entry callback hides.
-TURBO = 'pre-capture Turbo RAW menu'
-TURBO_STRINGS = (3250, 3251)                       # label, help (z8patch.shared.STRING_IDS['turbo-raw'])
-PHOTO_ROWS, TURBO_ROW, SWITCH_ROW = 0x43DCF790, 2, 19   # row 19: Long exposure NR, a stock switch row
+# RAW extras (HN28): Photo shooting menu row 2 (item 0x2CAA), one of the two rows the stock entry callback hides, opens
+# menu state 0x30 (free in stock: its rows are hidden "Disable" rows and nothing transitions to it) as a page of six
+# switch rows (hooks.S: extras_rows, extras_toggle, extras_refresh). Every record changed here is referenced only by
+# state 0x30 (its page, layout, callbacks and first row table).
+EXTRAS = 'pre-capture RAW extras menu'
+EXTRAS_STRINGS = (3250, 7)          # z8patch.shared.STRING_IDS['raw-extras']: Turbo RAW, RAW extras, DX lens: FX area,
+                                    # C20, Bank: release mode, Bank: pre-release, Turbo RAW review
+TITLE, C20_LABEL, C15_LABEL = 3251, 3253, 2371
+PHOTO_ROWS, EXTRAS_ROW, PLAIN_ROW = 0x43DCF790, 2, 46   # row 46: Auto capture, a no-value row (pixel shift's row 45 too)
 ROW_STOCK = (0x43A, 0xFFFF, 0xFFFF, 0, 0x101041, 0xB44, 0x2CAA, 0x40004, 0xFFFFFFFF, 0xFFFFFFFF, 2)
-SWITCH_STOCK = (0x17C, 0x484, 0x17C, 0, 0x20901005, 0x1326, 0x2A14, 0x40004, 0xFFFFFFFF, 0xFFFFFFFF, 2)
+PLAIN_STOCK = (0x702, 0xA3C, 0x702, 0, 0x101040, 0xFFFF, 0x2D0D, 0x40004, 0xFFFFFFFF, 0xFFFFFFFF, 2)
 ROW_EVENTS = 0x43E094A0                            # row 2's own transition table (photo page pointer 2)
-STAY, BACK = 0x68C, 0x68D
-TURBO_EVENTS = {                                   # stock entry -> the switch row's (row 19's) entry
+STAY, BACK, GO, PAGE_STATE = 0x68C, 0x68D, 0x403B1BA8, 0x30
+EXTRAS_EVENTS = {                                  # stock entry -> as row 45's (a row that opens a page)
     (0x285, 0x403B1BA4, 0, 0x1): (0x285, 0x403B1BA4, 0, BACK),
-    (0x286, 0x403B1BA8, 0, 0x1D): (0x286, 'turbo_toggle', 0, STAY),
-    (0x29F, 0x403B1BA8, 0x403B1C64, 0x1D): (0x28B, 'turbo_toggle', 0, STAY),
+    (0x286, GO, 0, 0x1D): (0x286, GO, 0, PAGE_STATE),
+    (0x29F, GO, 0x403B1C64, 0x1D): (0x29F, GO, 0x403B1C64, PAGE_STATE),
     (0x2A0, 0x403B1BA4, 0x403B1C64, 0x1): (0x2A0, 0x403B1BA4, 0x403B1C64, BACK),
-    (0x2AE, 0x403B1BA8, 0, 0x1D): (0x2AE, 'turbo_toggle', 0, STAY),
-    (0x3F, 0x405E2AD8, 0, STAY): (0x281, 0x403B1C3C, 0x403B1CB8, STAY),
+    (0x2AE, GO, 0, 0x1D): (0x2AE, GO, 0, PAGE_STATE),
+    (0x3F, 0x405E2AD8, 0, STAY): (0x28B, GO, 0, PAGE_STATE),   # right (row 2 has none in stock)
 }
 # The photo menu entry callback 405D9704 hides the items of the list at 42B27788 (2CAAh, 2C13h, 1Ah, ...), count 2.
 # Pixel shift (still-photo-tools) sets the count to 1 to show 2C13h; this group moves the list start instead:
 # alone 42B2778C (2C13h, 1Ah: hides only 2C13h), with pixel shift 42B27784 (89h, not a photo menu item: hides nothing).
 HIDE_LIST, HIDE_STOCK = 0x405D9704, 0xD28EF101    # movz x1,#0x7788
-TURBO_TEXT = {      # one line of help: the shared text area has about 3.9 KiB left with every group selected
-    'en': ('Turbo RAW', 'On: longer RAW bursts, some gray previews.'),
-    'zh-CN': ('Turbo RAW', '开：RAW 连拍更长，部分预览为灰色。'),        # Chinese translated by AI from the English
-    'zh-TW': ('Turbo RAW', '開：RAW 連拍更長，部分預覽為灰色。'),
+STATES, INIT_EG, INIT_VA = 0x4BFFCC0, 0x4B13000, 0xA02808000
+PAGE_30, PAGE_29 = 0xA028CCBB0, 0xA028CC980        # page records (initialized data)
+LAYOUT_30, LAYOUT_29 = 0x43DD37F0, 0x43DD27C0      # 3 resources each (68 bytes), title = resource 1 word 0
+CALLBACKS_30, AVAILABLE_30, REFRESH_30 = 0xA028E6D28, 0x405DB3A0, 0x405DB3C4  # 5 callbacks: 4th availability, 5th refresh
+TABLE_30, SWITCH_TABLE, SWITCH_ACTION = 0x43E34940, 0x43E304E0, 0x4051226C   # 16 entries each; DX crop alert's
+# C20 (HN24) at runtime: hooks.S extras_string / extras_pair / extras_c15_pre; (VA, stock word, entry, link)
+C20_SITES = (
+    (0x4032E130, 0xD2958909, 'extras_string', False),   # string reader: mov x9,#0xac48
+    (0x4041D1A0, 0x8B294908, 'extras_pair', True),      # shooting display pair: add x8,x8,w9,uxtw #2
+    (0x40F9A514, 0xD2953E09, 'extras_c15_pre', False),  # C15 pre-release frames: mov x9,#0xa9f0
+)
+EXTRAS_TEXT = {     # labels only (no help text): the shared text area is small with every group selected
+    'en': ('Turbo RAW', 'RAW extras', 'DX lens: FX area', None, 'Bank: release mode', 'Bank: pre-release',
+           'Turbo RAW review'),
+    'zh-CN': ('Turbo RAW', 'RAW extras', 'DX 镜头：FX 区域', None, '拍摄菜单库：释放模式', '拍摄菜单库：预拍选项',
+              'Turbo RAW 播放'),        # Chinese translated by AI from the English, with the camera's own terms
+    'zh-TW': ('Turbo RAW', 'RAW extras', 'DX 鏡頭：FX 區域', None, '拍攝選單庫：快門釋放模式', '拍攝選單庫：預先釋放捕捉',
+              'Turbo RAW 播放'),
 }
 LANGUAGES, TABLE_DIR, BLOB_DIR, FAMILY_STRING, STOCK_ENTRIES = 36, 0x311C5A0, 0x387AF58, 2222, 3137
 
 
-def turbo_strings(eg):
-    """Label and help for each of the 36 languages; the family (en, zh-CN, zh-TW) follows each language's stock
+def init_offset(va):
+    return va - INIT_VA + INIT_EG
+
+
+def extras_strings(eg):
+    """The seven labels for each of the 36 languages. The family (en, zh-CN, zh-TW) follows each language's stock
     "Pixel shift shooting" string, as pixel shift's own menu text does, and every glyph must occur in that language's
-    stock strings."""
+    stock strings. C20 is the language's own C15 release-mode label with 20 for 15 (Arabic keeps its right-to-left
+    mark)."""
     out = []
     B = 0x40160000
     for k in range(LANGUAGES):
         table = struct.unpack_from('<Q', eg, TABLE_DIR + 8 * k)[0] - B
         blob = struct.unpack_from('<Q', eg, BLOB_DIR + 8 * k)[0] - B
         offsets = struct.unpack_from(f'<{STOCK_ENTRIES}i', eg, table)
-        a, b = offsets[FAMILY_STRING], offsets[FAMILY_STRING + 1]
-        family = eg[blob + a:blob + b].decode('utf-16le')
-        texts = TURBO_TEXT['zh-TW' if '像素' in family and '攝' in family else 'zh-CN' if '像素' in family else 'en']
+        text = lambda i: eg[blob + offsets[i]:blob + offsets[i + 1]].decode('utf-16le')
+        family = text(FAMILY_STRING)
+        texts = list(EXTRAS_TEXT['zh-TW' if '像素' in family and '攝' in family else 'zh-CN' if '像素' in family else 'en'])
+        c15 = text(C15_LABEL)
+        require(c15.lstrip('\u202b') == 'C15', ('RAW extras: unexpected C15 label of language', k, c15))
+        texts[3] = c15.replace('C15', 'C20')
         pool = set(eg[blob + offsets[0]:blob + offsets[STOCK_ENTRIES - 1]].decode('utf-16le', 'replace'))
         missing = sorted({c for c in ''.join(texts) if c != ' ' and c not in pool})
-        require(not missing, ('Turbo RAW: glyphs absent from the stock strings of language', k, missing))
-        out.append(list(texts))
+        require(not missing, ('RAW extras: glyphs absent from the stock strings of language', k, missing))
+        out.append(texts)
     return out
 
 
@@ -86,34 +113,75 @@ def apply(image, code, entries, photo=False):
             raise ValueError(f'Unexpected quality/size role bytes at {site:#x}')
         yield site, old, new, MENU
 
-    # Turbo RAW row: label and help, the switch row's style and switch resource, item 0x2CAA kept.
-    at = PHOTO_ROWS + 44 * TURBO_ROW
-    require(struct.unpack_from('<11I', image, at - B) == ROW_STOCK, 'Turbo RAW: unexpected photo menu row 2')
-    require(struct.unpack_from('<11I', image, PHOTO_ROWS + 44 * SWITCH_ROW - B) == SWITCH_STOCK, 'Turbo RAW: unexpected switch row')
+    # Row 2: "RAW extras", no help, the no-value style of row 46, item 0x2CAA kept.
+    at = PHOTO_ROWS + 44 * EXTRAS_ROW
+    require(struct.unpack_from('<11I', image, at - B) == ROW_STOCK, 'RAW extras: unexpected photo menu row 2')
+    require(struct.unpack_from('<11I', image, PHOTO_ROWS + 44 * PLAIN_ROW - B) == PLAIN_STOCK, 'RAW extras: unexpected row 46')
     row = list(ROW_STOCK)
-    row[0], row[1], row[2] = TURBO_STRINGS[0], TURBO_STRINGS[1], TURBO_STRINGS[0]
-    row[4], row[5] = SWITCH_STOCK[4], SWITCH_STOCK[5]
-    yield at, struct.pack('<11I', *ROW_STOCK), struct.pack('<11I', *row), TURBO + ': row 2 (item 0x2CAA) label, help, switch style'
-    # Row 2's transitions: OK, right and touch flip the switch (turbo_toggle), as row 19's do with 0x4051226C.
+    row[0], row[1], row[2] = TITLE, 0xFFFF, TITLE
+    row[4], row[5] = PLAIN_STOCK[4], PLAIN_STOCK[5]
+    yield at, struct.pack('<11I', *ROW_STOCK), struct.pack('<11I', *row), EXTRAS + ': row 2 (item 0x2CAA) label, no value column'
+    # Row 2's transitions: OK, right and touch open state 0x30, left goes back (as row 45's table).
     seen = set()
     for k in range(128):
         entry = struct.unpack_from('<4Q', image, ROW_EVENTS - B + 32 * k)
         if entry[0] == 0x3BB:
             break
-        if entry in TURBO_EVENTS:
-            new = tuple(entries[v] if isinstance(v, str) else v for v in TURBO_EVENTS[entry])
+        if entry in EXTRAS_EVENTS:
+            new = EXTRAS_EVENTS[entry]
             seen.add(entry)
             yield ROW_EVENTS + 32 * k, struct.pack('<4Q', *entry), struct.pack('<4Q', *new), \
-                TURBO + f': row 2 transition {entry[0]:#x} -> {new[0]:#x}'
-    require(seen == set(TURBO_EVENTS), 'Turbo RAW: unexpected row 2 transitions')
+                EXTRAS + f': row 2 transition {entry[0]:#x} -> {new[0]:#x} state {new[3]:#x}'
+    require(seen == set(EXTRAS_EVENTS), 'RAW extras: unexpected row 2 transitions')
     # Show row 2: move the hidden-item list start (see HIDE_LIST).
     old = struct.pack('<I', HIDE_STOCK)
-    require(image[HIDE_LIST - B:HIDE_LIST - B + 4] == old, 'Turbo RAW: unexpected photo menu entry callback')
+    require(image[HIDE_LIST - B:HIDE_LIST - B + 4] == old, 'RAW extras: unexpected photo menu entry callback')
     start = 0x7784 if photo else 0x778C
     yield HIDE_LIST, old, struct.pack('<I', 0xD2800001 | (start << 5)), \
-        TURBO + (': hidden-item list from 42B27784 (pixel shift shows 2C13h)' if photo else ': hidden-item list from 42B2778C (only 2C13h)')
-    # Photo menu refresh: set the Turbo RAW switch after the Extended menu banks one.
-    site = 0x405D98A4
-    old = branch(site, 0x405121E4, True)
-    require(image[site - B:site - B + 4] == old, 'Turbo RAW: unexpected photo menu refresh')
-    yield site, old, branch(site, entries['turbo_refresh'], True), TURBO + ': switch state in the photo menu refresh'
+        EXTRAS + (': hidden-item list from 42B27784 (pixel shift shows 2C13h)' if photo else ': hidden-item list from 42B2778C (only 2C13h)')
+
+    # State 0x30: its page record becomes state 0x29's ("Choose image area": settings page, list rectangles, footer)
+    # with state 0x30's layout, the six rows of hooks.S and their row-table pointers.
+    state = struct.unpack_from('<12Q', image, STATES + 96 * PAGE_STATE)
+    require(state[5] == CALLBACKS_30 and state[10] == PAGE_30, 'RAW extras: unexpected state 0x30')
+    page30 = image[init_offset(PAGE_30):init_offset(PAGE_30) + 0x50]
+    page29 = image[init_offset(PAGE_29):init_offset(PAGE_29) + 0x50]
+    require(struct.unpack_from('<4Q', page30) == (0x80001002, LAYOUT_30, 0x43DD3900, 0x43DD3958) and
+            struct.unpack_from('<H', page30, 0x20)[0] == 2 and
+            struct.unpack_from('<4Q', page29) == (0x80001000, LAYOUT_29, 0x43DD28D0, 0x43DD2928), 'RAW extras: page records')
+    page = bytearray(page29)
+    struct.pack_into('<3Q', page, 8, LAYOUT_30, entries['extras_rows'], entries['extras_events'])
+    struct.pack_into('<H', page, 0x20, 6)
+    yield PAGE_30 - INIT_VA + INIT_EG + B, bytes(page30), bytes(page), EXTRAS + ': state 0x30 page record (6 switch rows)'
+    # Layout: state 0x29's three resources, title "RAW extras".
+    lay30 = image[LAYOUT_30 - B:LAYOUT_30 - B + 4 * 68]
+    lay29 = image[LAYOUT_29 - B:LAYOUT_29 - B + 4 * 68]
+    require(lay30[3 * 68:] == bytes(68) and lay29[3 * 68:] == bytes(68) and
+            struct.unpack_from('<I', lay30, 68)[0] == 0x300, 'RAW extras: layouts')
+    lay = bytearray(lay29[:3 * 68])
+    struct.pack_into('<I', lay, 68, TITLE)
+    yield LAYOUT_30, lay30[:3 * 68], bytes(lay), EXTRAS + ': state 0x30 layout (state 0x29\'s, title RAW extras)'
+    # Availability (always) and refresh (the switches) callbacks.
+    at = CALLBACKS_30 + 0x18
+    old = struct.pack('<2Q', AVAILABLE_30, REFRESH_30)
+    require(image[init_offset(at):init_offset(at) + 16] == old, 'RAW extras: state 0x30 callbacks')
+    yield at - INIT_VA + INIT_EG + B, old, struct.pack('<2Q', entries['extras_available'], entries['extras_refresh']), \
+        EXTRAS + ': state 0x30 availability (always) and refresh callbacks'
+    # Row table: the DX crop alert switch table with its toggle replaced by extras_toggle (same 16 entries).
+    t30 = image[TABLE_30 - B:TABLE_30 - B + 16 * 32]
+    tsw = image[SWITCH_TABLE - B:SWITCH_TABLE - B + 16 * 32]
+    require(struct.unpack_from('<4Q', t30, 15 * 32)[0] == 0x3BB and struct.unpack_from('<4Q', tsw, 15 * 32)[0] == 0x3BB,
+            'RAW extras: row tables')
+    table, swaps = bytearray(tsw), 0
+    for k in range(16):
+        if struct.unpack_from('<Q', table, 32 * k + 8)[0] == SWITCH_ACTION:
+            struct.pack_into('<Q', table, 32 * k + 8, entries['extras_toggle'])
+            swaps += 1
+    require(swaps == 3, 'RAW extras: switch table actions')
+    yield TABLE_30, bytes(t30), bytes(table), EXTRAS + ': state 0x30 row table (switch rows, extras_toggle)'
+
+    # C20 at runtime: label, shooting-display icon pair and C15 pre-release frames (hooks.S).
+    for site, word, name, link in C20_SITES:
+        old = struct.pack('<I', word)
+        require(image[site - B:site - B + 4] == old, f'RAW extras: unexpected C20 site {site:#x}')
+        yield site, old, branch(site, entries[name], link), EXTRAS + f': C20 switch ({name})'

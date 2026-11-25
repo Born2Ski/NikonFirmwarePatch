@@ -65,6 +65,9 @@ KIND_MAX = 6
 ID_PRE, ID_POST = 0x02001C11, 0x02001C12  # prerelease option: pre-release burst 0..3, post-release burst 0..3 (3 Max)
 PRE_MAX, POST_MAX = 3, 3
 SLOT2_AC, SLOT2_D_GAP = 0xA03D732C1, 0x359  # second byte of slot k at SLOT2_AC + k, + 0x359 from k = 3 (0xA03D7361D/E)
+# Option switches=True (RAW extras, z8precapture/menu): saving and restoring the release mode needs bit 3, the
+# Pre-Release Capture options bit 4 of the RAW extras byte (0x80 | bits; any value without bit 7 = the defaults, on).
+EXTRAS, BIT_REL, BIT_PRE, EXTRAS_DEFAULT = 0xA03D732A5, 3, 4, 0x3E
 
 SITES = {                               # VA: (stock target, link, entry label, purpose)
     0x410DD4D8: (BATCH_GET, True, 'rb_switch', 'bank select: save the left bank\'s release mode, restore the new bank\'s'),
@@ -119,8 +122,9 @@ def _epilogue(b, pairs, size):
     b.ret()
 
 
-def code(prerelease=False):
-    """(bytes, entry labels, block) of the module at CODE_AT; prerelease adds the Pre-Release Capture options."""
+def code(prerelease=False, switches=False):
+    """(bytes, entry labels, block) of the module at CODE_AT; prerelease adds the Pre-Release Capture options,
+    switches makes both follow the RAW extras switches."""
     b = Block(CODE_AT)
 
     # ---- rb_switch (H1): x0..x4 = the stock batch-get arguments; x19 list, w21 old + 1, w24 new + 1 (caller's) ----
@@ -260,6 +264,9 @@ def code(prerelease=False):
     b.mov_x(20, 1)
     b.cmp_wi(19, GLOBAL)
     b.b_cond('hi', 'save_out')
+    if switches:
+        b.bl('rb_bits')
+        b.tbz_w(0, BIT_REL, 'save_pre')
     _mov_w32(b, 0, ID_KIND)
     b.mov_x(1, 20)
     b.bl('rb_get')
@@ -283,7 +290,12 @@ def code(prerelease=False):
     b.mov_wr(0, 19)
     b.bl('rb_slot')                     # x9 only
     b.strb_w(10, 9)
+    if switches:
+        b.label('save_pre')
     if prerelease:
+        if switches:
+            b.bl('rb_bits')
+            b.tbz_w(0, BIT_PRE, 'save_out')
         _mov_w32(b, 0, ID_PRE)
         b.mov_x(1, 20)
         b.bl('rb_get')
@@ -312,8 +324,12 @@ def code(prerelease=False):
     size = _prologue(b, 3)
     b.mov_x(20, 1)
     b.mov_x(23, 2)
-    if prerelease:
+    if prerelease or switches:
         b.mov_wr(24, 0)                 # slot, for rb_apply_pre
+    if switches:
+        b.bl('rb_bits')
+        b.tbz_w(0, BIT_REL, 'apply_out')
+        b.mov_wr(0, 24)
     b.cmp_wi(0, GLOBAL)
     b.b_cond('hi', 'apply_out')
     b.bl('rb_slot')
@@ -375,6 +391,11 @@ def code(prerelease=False):
         b.label('rb_apply_pre')
         size = _prologue(b, 2)
         b.mov_x(20, 1)
+        if switches:
+            b.mov_wr(21, 0)
+            b.bl('rb_bits')
+            b.tbz_w(0, BIT_PRE, 'pre_out')
+            b.mov_wr(0, 21)
         b.cmp_wi(0, GLOBAL)
         b.b_cond('hi', 'pre_out')
         b.bl('rb_slot2')
@@ -428,6 +449,17 @@ def code(prerelease=False):
     b.mov_w(2, LINE)
     b.b(DS_GET)
 
+    if switches:
+        # ---- rb_bits: w0 = the RAW extras bits; leaf, x0 and x9 only ----
+        b.label('rb_bits')
+        b.mov_x64(9, EXTRAS)
+        b.ldrb_w(0, 9)
+        b.tbz_w(0, 7, 'bits_default')
+        b.ret()
+        b.label('bits_default')
+        b.mov_w(0, EXTRAS_DEFAULT)
+        b.ret()
+
     # ---- rb_slot(w0 = slot 0..4): x9 = its address; leaf, changes x9 and the flags only ----
     b.label('rb_slot')
     b.mov_x64(9, SLOT_AC)
@@ -454,9 +486,9 @@ def code(prerelease=False):
     return raw, dict(b.labels), b
 
 
-def edits(eg, prerelease=False):
+def edits(eg, prerelease=False, switches=False):
     """Byte edits (offset, old, new, purpose) against the stock C3.11 EG."""
-    raw, labels, _ = code(prerelease)
+    raw, labels, _ = code(prerelease, switches)
     out = []
 
     def add(va, old, new, why):
@@ -464,7 +496,8 @@ def edits(eg, prerelease=False):
         require(eg[o:o + len(old)] == old, f'release-mode banks: unexpected stock bytes at {va:#x}')
         out.append(dict(offset=o, old=old, new=new, purpose='release-mode banks: ' + why))
 
-    add(CODE_AT, bytes(len(raw)), raw, 'code, with the Pre-Release Capture options' if prerelease else 'code')
+    add(CODE_AT, bytes(len(raw)), raw, ('code, with the Pre-Release Capture options' if prerelease else 'code') +
+        (', RAW extras switches' if switches else ''))
     for va, (target, link, entry, why) in SITES.items():
         add(va, _branch(va, target, link), _branch(va, labels[entry], link), why)
     return out

@@ -38,6 +38,9 @@
  * 1Eh, saved with the group: 0 = never set (TURBO_DEFAULT, Off unless built otherwise), 1 = Off, 2 = On.
  * HN27: "Turbo RAW" as a fifth Auto series playback speed: plays a series back in real time and shows only the frames
  * HN18 decodes (every N-th frame, N from the current settings, at N frame intervals per step).
+ * HN28: RAW extras (Photo shooting menu row 2, z8precapture/menu): six switches in the Turbo RAW byte. Here: Turbo RAW
+ * (HN26), C20 (HN24's frame selector, C15 HE partial decoding and the review rate; the label, icons and pre-release
+ * counts are switched in the menu unit) and Turbo RAW review (HN27).
  * Public adapter: no card configuration, diagnostic footer off by default. */
 typedef unsigned char u8;
 typedef unsigned short u16;
@@ -237,7 +240,26 @@ typedef long s64;
 #ifndef TURBO_DEFAULT
 #define TURBO_DEFAULT 0             /* value 0 (never set): Off */
 #endif
-static int turbo_on(void) { u32 v=*(volatile u8 *)TURBO_BYTE; return v==2u || (v!=1u && TURBO_DEFAULT); }
+/* HN28: the byte holds the RAW extras switches (z8precapture/menu): 0x80 | bits once a switch was toggled there; the
+ * values the Turbo RAW row wrote before (0 never set, 1 Off, 2 On) set only Turbo RAW, the others take their default.
+ * The menu unit (hooks.S), the release-mode bank module (z8relbank) and the DX lens stubs (z8dxlens) decode it the same
+ * way. */
+#define X_TURBO 1u                  /* Turbo RAW: HN18..HN21 partial decoding */
+#define X_DX 2u                     /* DX lens: FX area (z8dxlens) */
+#define X_C20 4u                    /* HN24: C15 takes 20 photos per second, label and icons C20 */
+#define X_RELBANK 8u                /* release mode per photo shooting menu bank (z8relbank) */
+#define X_PREBANK 16u               /* pre-/post-release burst per photo shooting menu bank (z8relbank) */
+#define X_REVIEW 32u                /* HN27: Turbo RAW review speed row */
+#define X_DEFAULT (X_DX|X_C20|X_RELBANK|X_PREBANK|X_REVIEW|(TURBO_DEFAULT?X_TURBO:0u))
+static u32 extras(void) {
+    u32 v=*(volatile u8 *)TURBO_BYTE;
+    if(v&0x80u) return v&0x7fu;
+    if(v==2u) return X_DEFAULT|X_TURBO;
+    if(v==1u) return X_DEFAULT&~X_TURBO;
+    return X_DEFAULT;
+}
+static int turbo_on(void) { return (extras()&X_TURBO)!=0; }
+static int c20_on(void) { return (extras()&X_C20)!=0; }
 #define G_SUBMITS 0xa03bc5634ul      /* frames submitted in this burst (+1 per stock submit 0x40f93098; 0 after 0x40f92fec) */
 #define SHOT_GET ((u32 (*)(u32))0x40ec44e4ul)   /* property read, as the submit sites use it */
 #define ID_SHOTS 0x4a05u             /* running shot total; M+0x2508 = this burst's count at submit + total */
@@ -598,10 +620,10 @@ __attribute__((used)) u32 hn5_tdec_sel(u64 r) {
      * the newest submitted one (its shot number M+0x2508 equals this burst's count plus the running total: true for
      * the newest frame during the burst and for the last frame after the burst end resets the count).
      * HN23: in C60 also HE (the DX HE decode, ~30 ms, is slower than the 16.7 ms frame interval), with its own N.
-     * HN24: in C15 (20 fps) also HE, with the N of the geometry.
+     * HN24: in C15 (20 fps) also HE, with the N of the geometry (HN28: only while C20 is On).
      * HN26: only while Turbo RAW is On. */
     if(turbo_on() && e && (q=bound(r,e,Q_MARKED)) && (get32(q+A_VALUE)&0xffu)==13u &&
-       (sel==4 || get32(q+0x20)==MODE_C60 || get32(q+0x20)==MODE_C15)) {
+       (sel==4 || get32(q+0x20)==MODE_C60 || (get32(q+0x20)==MODE_C15 && c20_on()))) {
         u32 dims=LOAD32(e+0x38),seq=get32(q+0x18),n; u64 m=LOAD64(r+0x790);
         if(get32(q+0x20)==MODE_C60) n=sel==4?N_C60_HS:N_C60_HE;
         else n=dims==FX_DIMS?N_FX:N_DX;
@@ -643,7 +665,7 @@ __asm__(".pushsection .text.hn5stub,\"ax\",%progbits\n"
 #define G_FRAMES 0xa03bc2cdcul
 #define C15_FPS 20u
 __attribute__((used)) u32 precapture_frame_skip(u32 index,u32 mode) {
-    if(mode==MODE_C15) {
+    if(mode==MODE_C15 && c20_on()) {
         u32 fps=RATE_FPS(index),n=LOAD32(G_FRAMES);
         if(fps==30u) return n%3u==2u;
         if(fps<=C15_FPS) return 0;
@@ -2045,16 +2067,17 @@ __attribute__((used)) const u32 precapture_review_rows[5*11] = {
 __attribute__((used)) const u64 precapture_review_events[5] = {   /* the stock rows' shared transition table */
     0x43d53e88ul, 0x43d53e88ul, 0x43d53e88ul, 0x43d53e88ul, 0x43d53e88ul,
 };
-static int review_on(void) { return LOAD8(REVIEW_BYTE)==1u; }
+/* HN28: the speed row exists only while the RAW extras switch Turbo RAW review is On. */
+static int review_on(void) { return (extras()&X_REVIEW) && LOAD8(REVIEW_BYTE)==1u; }
 /* N and the burst rate the current settings give (0 outside C15/C30/C60), as hn5_tdec_sel decides per frame. */
 static u32 review_plan(u32 *fps) {
     u32 mode=LOAD32(G_RELMODE),area,n=1u;
     if(LOAD32(G_PHOTO)!=1u) return 0;
-    if(mode==3u) *fps=30u; else if(mode==MODE_C60) *fps=60u; else if(mode==MODE_C15) *fps=C15_FPS; else return 0;
+    if(mode==3u) *fps=30u; else if(mode==MODE_C60) *fps=60u; else if(mode==MODE_C15) *fps=c20_on()?C15_FPS:15u; else return 0;
     if(turbo_on() && LOAD32(G_QTYPE)==1u) {
         area=GUI_GET(ID_GAREA);
         if(mode==MODE_C60) n=rawrec_hs()?N_C60_HS:N_C60_HE;
-        else if((mode==MODE_C15 || rawrec_hs()) && area<=1u) n=area?N_DX:N_FX;
+        else if(((mode==MODE_C15 && c20_on()) || rawrec_hs()) && area<=1u) n=area?N_DX:N_FX;
     }
     return n;
 }

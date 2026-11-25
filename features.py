@@ -118,33 +118,36 @@ def compose(eg, features, compiler='clang', code_source='prebuilt', *, check_rec
         from z8precapture.patcher import edits
         code,meta=load('precapture',code_source,compiler)
         for e in edits(code,meta['symbols']):img.put(e['offset'],e['new'],e['purpose'])
-        from z8precapture.menu.sites import apply as raw_menu, turbo_strings
+        from z8precapture.menu.sites import apply as raw_menu, extras_strings
+        from z8dxlens.patcher import runtime as dx_runtime, RUNTIME_AT as DX_AT
         code_menu,entries=unit('precapture-menu')
-        require(0x409F0000+len(code)<=0x409FF000,'Pre-capture code reaches RAW menu')
-        strings.add('turbo-raw',turbo_strings(eg))
+        require(0x409F0000+len(code)<=DX_AT,'Pre-capture code reaches the DX lens switch')
+        strings.add('raw-extras',extras_strings(eg))
         for site,old,new,why in raw_menu(eg,code_menu,entries,photo):
             img.put(site-0x40160000,new,why,expect=old)
         detail['precapture']=dict(code_sha256=meta['sha256'],code_bytes=len(code),diagnostics=False,
                                   space_fallback=True,remaining_count=True,dx=True,lossless_fallback='HE*')
-        from z8precapture.patcher import c20, label_edits
-        if c20(meta['symbols']):                     # HN24 built in: the C15 label and release-mode icons read 20
-            lab=label_edits(eg)
-            for e in lab:img.put(e['offset'],e['new'],e['purpose'],expect=e['old'])
-            detail['c15-label']=dict(edits=len(lab))
+        # HN28 RAW extras: C20 (HN24), Turbo RAW review (HN27), DX lens: FX area and the release-mode/pre-release banks
+        # are built in and switched at runtime from the RAW extras page.
+        from z8precapture.patcher import c20, c20_checks
+        require(c20(meta['symbols']) and 'precapture_review_advance' in meta['symbols'],
+                'RAW extras: the pre-capture unit lacks C20 (HN24) or Turbo RAW review (HN27)')
+        c20_checks(eg)
         from z8precapture.patcher import review_edits
-        if 'precapture_review_advance' in meta['symbols']:   # HN27: Turbo RAW review speed (label = Turbo RAW string)
-            rv=review_edits(eg,code,meta['symbols'])
-            for e in rv:img.put(e['offset'],e['new'],e['purpose'],expect=e['old'])
-            detail['turbo-review']=dict(edits=len(rv))
-        from z8dxlens.patcher import edits as dx_edits
-        dx=dx_edits(eg)
+        rv=review_edits(eg,code,meta['symbols'])
+        for e in rv:img.put(e['offset'],e['new'],e['purpose'],expect=e['old'])
+        detail['turbo-review']=dict(edits=len(rv))
+        dx=dx_runtime(eg)
         for e in dx:img.put(e['offset'],e['new'],e['purpose'],expect=e['old'])
-        detail['dx-lens-fx']=dict(edits=len(dx))
+        detail['dx-lens-fx']=dict(edits=len(dx),switch=True)
         from z8relbank.patcher import edits as rb_edits, CODE_AT as RB_AT
         require(0x409FF000+len(code_menu)<=RB_AT,'RAW menu code reaches the release-mode bank code')
-        rb=rb_edits(eg,prerelease=True)
+        rb=rb_edits(eg,prerelease=True,switches=True)
         for e in rb:img.put(e['offset'],e['new'],e['purpose'],expect=e['old'])
-        detail['release-mode-banks']=dict(edits=len(rb),code_at=hex(RB_AT),code_bytes=len(rb[0]['new']),prerelease=True)
+        detail['release-mode-banks']=dict(edits=len(rb),code_at=hex(RB_AT),code_bytes=len(rb[0]['new']),prerelease=True,
+                                          switches=True)
+        detail['raw-extras']=dict(byte='0xa03d732a5',bits='0 Turbo RAW, 1 DX lens: FX area, 2 C20, 3 release mode per bank, '
+                                  '4 pre-release per bank, 5 Turbo RAW review')
     if photo:
         from z8pixelshift.patcher import build_main
         code,meta=load('pixelshift',code_source,compiler)

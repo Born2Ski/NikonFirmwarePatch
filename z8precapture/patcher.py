@@ -52,7 +52,8 @@ def edits(code, symbols):
     ):
         values[at - 0x40160000] = bl(at, entries[entry])
     if c20(symbols):                               # HN24 (C15 at 20 fps) only when the unit carries the frame selector
-        values[0x4cd59f0] = struct.pack('<3I', 6, 10, 20)    # C15 pre-release frames for 0.3/0.5/1 s (stock 5, 8, 15)
+        # HN28: the C15 pre-release frames (6/10/20 for 0.3/0.5/1 s, stock 5/8/15) follow the C20 switch at runtime
+        # (menu unit, extras_c15_pre), so the stock table at 0x4cd59f0 stays.
         for at in (0x40f807bc, 0x40f80a2c):                  # photo-frame selector calls
             values[at - 0x40160000] = bl(at, entries['precapture_frame_skip'])
     for at in (0x40ec4640, 0x40ec6a8c, 0x40f24e08, 0x41014b1c, 0x410e71f8):
@@ -80,9 +81,12 @@ def edits(code, symbols):
 
 
 # HN24: C15 takes 20 photos per second, so its release-mode label (UI string 2371, "C15" in every language; Arabic has
-# a right-to-left mark in front) reads "C20". Same length: the two digits are replaced in place in each language's text.
-LANG_TABLES, LANG_TEXT, C15_LABEL = 0x311C5A0, 0x387AF58, 2371   # EG offsets of the 36 offset-table / text pointers
-ICON_15, ICON_20 = 2650, 2670   # PNG table 0x431d96d0 indexes: frames symbol with 15 / with 20 (64x32 icon set)
+# a right-to-left mark in front) reads "C20" and its icons show 20. HN28: all of it follows the RAW extras switch C20 at
+# runtime (z8precapture/menu/hooks.S): the label through the string reader (string 3253 "C20"), the shooting-display
+# pair through its reader, the three RAM icon references below written by extras_sync. The image keeps the stock
+# values; c20_checks() makes sure they are the ones the menu unit expects.
+C15_LABEL = 2371
+ICON_15 = 2650      # PNG table 0x431d96d0 index: frames symbol with 15 (64x32 set); 2670 = with 20 (CH 20 fps)
 # (EG offset, format, record {index, kind 1 = image} before the value or None, where)
 ICONS = (
     (0x4BC0646, '<H', None, 'release-mode icon list RAM 0xa028b5640 [S, CL, CH, C15, C30, C60, C120], entry 3'),
@@ -90,39 +94,17 @@ ICONS = (
     (0x4B7DC90, '<I', (13, 1), 'shooting-display release-mode icons RAM 0xa02872700, code 13'),
 )
 # The shooting display draws the high-speed modes from (outlined 68x36, plain 64x32) image pairs [C15, C30, C60, C120] at
-# VA 0x42ae7984 (read-only data; the CH speeds have their own pairs earlier in the same table). C15's pair -> the 20 icons.
+# VA 0x42ae7984 (read-only data, read only by 0x4041d18c..: base 0x42ae792e, index 22 = C15).
 PAIRS = 0x2987986                                               # EG offset of C15's pair
 PAIRS_STOCK = (2713, 2650, 2708, 2643, 5929, 5930, 2709, 2644)   # C15, C30, C60, C120 (outlined, plain)
-PAIR_20 = (2714, 2670)
 
 
-def label_edits(eg):
-    out, seen = [], set()
-    for language in range(36):
-        table = struct.unpack_from('<Q', eg, LANG_TABLES + 8 * language)[0] - BASE
-        text = struct.unpack_from('<Q', eg, LANG_TEXT + 8 * language)[0] - BASE
-        start, end = struct.unpack_from('<2i', eg, table + 4 * C15_LABEL)
-        label = eg[text + start:text + end]
-        at = label.find('C15'.encode('utf-16le'))
-        require(at >= 0 and at % 2 == 0 and label.decode('utf-16le').lstrip('\u202b') == 'C15',
-                f'C15 label: unexpected stock text in language {language}')
-        offset = text + start + at + 2
-        if offset in seen:
-            continue
-        seen.add(offset)
-        out.append(dict(offset=offset, old='15'.encode('utf-16le'), new='20'.encode('utf-16le'),
-                        purpose=f'pre-capture: C15 label reads C20 (language {language})'))
-    # The release-mode icon of C15 is the frames symbol with "15" (image 2650 of the 64x32 set, shared with CH 15 fps); the
-    # same set has the frames symbol with "20" (image 2670, CH 20 fps). Only C15's own references change; CH keeps its own.
+def c20_checks(eg):
     for off, fmt, ident, why in ICONS:
         require(eg[off - 8:off] == struct.pack('<2I', *ident) if ident else True, f'C15 icon: unexpected record at {off:#x}')
-        require(struct.unpack_from(fmt, eg, off)[0] == ICON_15, f'C15 icon: unexpected stock image at {off:#x}')
-        out.append(dict(offset=off, old=struct.pack(fmt, ICON_15), new=struct.pack(fmt, ICON_20),
-                        purpose='pre-capture: C15 icon shows 20 (' + why + ')'))
+        require(struct.unpack_from(fmt, eg, off)[0] == ICON_15, f'C15 icon: unexpected stock image at {off:#x} ({why})')
     require(struct.unpack_from('<8H', eg, PAIRS) == PAIRS_STOCK, 'C15 icon: unexpected shooting-display pair table')
-    out.append(dict(offset=PAIRS, old=struct.pack('<2H', *PAIRS_STOCK[:2]), new=struct.pack('<2H', *PAIR_20),
-                    purpose='pre-capture: C15 icon shows 20 (shooting-display icon pairs VA 0x42ae7984, outlined + plain)'))
-    return out
+    require(struct.unpack_from('<3I', eg, 0x4CD59F0) == (5, 8, 15), 'C15 pre-release: unexpected stock table')
 
 
 # HN27: Turbo RAW review, a fifth row on the Auto series playback speed page (state 0x275) and the playback hooks.
