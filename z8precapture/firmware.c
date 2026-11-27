@@ -306,8 +306,13 @@ static const u8 qual_magic[16] = "Z8PREQUALv5";
 #if defined(NEG_T_FILE_IO) || defined(NEG_P2_FILE_IO)
 static const u8 cfg_magic[16] = "Z8PRECFGv3";   /* HN5R card configuration, controls only */
 #endif
+#ifndef PRECAPTURE_DIAGNOSTIC_FOOTER
+#define PRECAPTURE_DIAGNOSTIC_FOOTER 0
+#endif
+#if PRECAPTURE_DIAGNOSTIC_FOOTER    /* footer-only constants */
 static const u8 foot_magic[16] = "Z8PREFOOTv4";
 static const u8 identity[8] = {'P','R','E','C','A','P','0','5'};   /* HN10: 'a' = 10 (8 bytes) */
+#endif
 /* MakerNote 0x0051 for HE (internal compression 4, budget 2): the original leaf 0x406ea044
  * writes this from M+0x2ac=2; identical in every camera HE NEF examined. */
 static const u8 he51[24] = {0x30,0x31,0x30,0x32,0x30,0x35,0x30,0x31,0,0,13,0,0,0,0,0,6,0,0,0,0,0,0,0};
@@ -361,6 +366,61 @@ static u32 crc16(const u8 *p,u32 n) {              /* CCITT-FALSE, as in NEFInfo
     return c;
 }
 static u64 now(void) { u64 t; CLOCK(&t); return t; }
+
+/* HN33: the review table (HN31) survives power-off. The writer saves it to X:\Z8REVIEW.BIN (X = the card of the NEF it
+ * just wrote; 'Z8RV', version 1, table size, CRC32 of the table, then the table) when no more frames wait and the burst
+ * count is back to 0 or 1 s has passed since the last save, and before recording the first frame of a new burst if
+ * anything is still unsaved. After power-on the table is read back once, before the first recording (writer) or the
+ * first review lookup (the shown image's card), if the RAM table is still empty. A file that fails any check is ignored
+ * (the review then falls back to HN27's fixed steps, as before). Open flags as the stock whole-file writer 0x40c07624. */
+#define RP ((volatile rp_t *)(0x409FEFE0ul - 0x40200000ul + 0xA0F800000ul))   /* 32 B after the table */
+typedef struct { u32 magic, tried, dirty, drive; u64 last_save; u32 bt_last, bt_hold; } rp_t;   /* bt_*: HN34 */
+#define RP_MAGIC 0x31505652u         /* "RVP1" */
+#define RV_MAGIC 0x56523858u         /* "X8RV" */
+#define RV_BYTES (16u+(u32)sizeof(rt_t))
+static volatile rp_t *rp(void) {
+    volatile rp_t *r=RP;
+    if(r->magic!=RP_MAGIC) { r->tried=0; r->dirty=0; r->drive=0; r->last_save=0; r->bt_last=0; r->bt_hold=0; r->magic=RP_MAGIC; }
+    return r;
+}
+static void rv_path(char *p,u32 drive) { copy((u8 *)p,(const u8 *)"A:\\Z8REVIEW.BIN",16); p[0]=(char)drive; }
+__attribute__((noinline)) static void rt_load(u32 drive) {
+    volatile rp_t *r=rp(); char p[16]; int fd; u8 *raw,*b; u32 n=0,bit;
+    if(drive<'A' || drive>'B') return;
+    bit=1u<<(drive-'A');
+    if((r->tried&bit) || RT->magic==RT_MAGIC) { r->tried|=bit; return; }
+    r->tried|=bit;
+    rv_path(p,drive);
+    if(EXISTS(p)<0) return;
+    raw=(u8 *)ALLOC(RV_BYTES+63u,0); if(!raw) return;
+    b=(u8 *)(((u64)raw+63)&~63ul);
+    fd=OPEN(p,0,0x20);
+    if(fd>=0) {
+        if(READ(fd,b,RV_BYTES,&n)==0 && n==RV_BYTES && get32(b)==RV_MAGIC && get32(b+4)==1u && get32(b+8)==(u32)sizeof(rt_t) &&
+           get32(b+12)==crc32(b+16,(u32)sizeof(rt_t)) && get32(b+16)==RT_MAGIC && RT->magic!=RT_MAGIC) {
+            copy((u8 *)RT,b+16,(u32)sizeof(rt_t)); RT->pend_key=0; RT->pend_ms=0;
+        }
+        CLOSE(fd);
+    }
+    FREE(raw);
+}
+__attribute__((noinline)) static void rt_save(u32 drive) {
+    volatile rp_t *r=rp(); char p[16]; int fd; u8 *raw,*b; u32 n=0;
+    if(drive<'A' || drive>'B' || !r->dirty || RT->magic!=RT_MAGIC) return;
+    raw=(u8 *)ALLOC(RV_BYTES+63u,0); if(!raw) return;
+    b=(u8 *)(((u64)raw+63)&~63ul);
+    copy(b+16,(const u8 *)RT,(u32)sizeof(rt_t)); zero(b+16+12,8);              /* pend_key, pend_ms: not saved */
+    set32(b,RV_MAGIC); set32(b+4,1u); set32(b+8,(u32)sizeof(rt_t)); set32(b+12,crc32(b+16,(u32)sizeof(rt_t)));
+    rv_path(p,drive);
+    fd=OPEN(p,0x301,0x20);                                                      /* write, create, truncate */
+    if(fd>=0) {
+        CLEAN(b,RV_BYTES);
+        if(WRITE(fd,(u64)b,RV_BYTES,&n)==0 && n==RV_BYTES) r->dirty=0;
+        CLOSE(fd);
+    }
+    r->last_save=now();
+    FREE(raw);
+}
 
 /* ---------------- frame record in the E allocation tail ---------------- */
 /* E is a resource descriptor: E+8 -> {data_base, data_bytes}; E+0x30 type/format/dims,
@@ -526,9 +586,6 @@ static int stock_hsfc_m(u64 m) {
 /* P2. Original: ldr x0,[x23,#0x748]; bl 0x4104df5c; str xzr,[x23,#0x748].
  * HN6: no card configuration and no file call. A marked C15/C30 frame whose Image quality (at submit) is RAW or
  * RAW + JPEG is retained with the fixed menu flags; a JPEG-only setting gets the menu grade and stays JPEG (stock path). */
-#ifndef PRECAPTURE_DIAGNOSTIC_FOOTER
-#define PRECAPTURE_DIAGNOSTIC_FOOTER 0
-#endif
 #define MENU_FLAGS (F_ENABLE|F_C30|F_DCF|F_MENU|(PRECAPTURE_DIAGNOSTIC_FOOTER?F_FOOTER:0u))    /* 0x9b, as M4_C15C30_MENU30 */
 #define MENU_PRE 30u
 #define MENU_LABEL 0u                                  /* "NA" (record +0x74, was the configuration label) */
@@ -1779,6 +1836,7 @@ bad:
     return 0;
 }
 
+#if PRECAPTURE_DIAGNOSTIC_FOOTER                 /* diagnostic builds only: F_FOOTER is never set otherwise (MENU_FLAGS) */
 static void build_footer(plan_t *p,u32 route) {
     u8 *f=p->wk+FOOT;
     zero(f,512); copy(f,foot_magic,16);
@@ -1803,6 +1861,7 @@ static void build_footer(plan_t *p,u32 route) {
     copy(f+0x1c0,p->q+A_KIND,0x3c);              /* aux +0x84..+0xbf: kind, value, M before, applied, Y, preview */
     set32(f+0x1fc,crc32(f,0x1fc));
 }
+#endif
 
 /* HN1 route: raw file calls under a temporary name, then rename. HN8 used it as the fallback when registration failed;
  * the NEF then took card space the database had not reserved. HN9: only in the control NEG_RAW_ROUTE. */
@@ -1840,10 +1899,12 @@ __attribute__((noinline)) static void raw_route(plan_t *p) {
         else if(after-t0>=budget && written<payload) status=S_BUDGET;
     }
     p->t_raw2=now(); p->chunks=chunks; p->raw_status=status;
+#if PRECAPTURE_DIAGNOSTIC_FOOTER
     if(flags&F_FOOTER) {
         build_footer(p,2); CLEAN(wk+FOOT,512);
         if(!write_all(fd,(u64)(wk+FOOT),512) && status==S_DONE) status=S_WRITE_FAIL;
     }
+#endif
     if(CLOSE(fd)!=0 && status==S_DONE) status=S_WRITE_FAIL;
     if(status==S_DONE && RENAME(p->tmp,p->fin)!=0) status=S_RENAME_FAIL;
     if(status!=S_DONE) stop_file(p->drive,status,p->shot);
@@ -1905,11 +1966,14 @@ __attribute__((noinline)) static u32 stock_nef(plan_t *p,u32 raw_only) {
        !seg(jp,&n,L->jfr.addr,mainsz,&sum) || !seg(jp,&n,(u64)(wk+ZEROS),pad,&sum) ||
        !seg(jp,&n,p->data,p->payload_bytes,&sum)) goto bad;
     p->t_nef0=now();
+#if PRECAPTURE_DIAGNOSTIC_FOOTER
     if(p->flags&F_FOOTER) {
         p->nsegs=n+1;
         build_footer(p,1); CLEAN(wk+FOOT,512);
         if(!seg(jp,&n,(u64)(wk+FOOT),512,&sum)) goto bad;
-    } else p->nsegs=n;
+    } else
+#endif
+    p->nsegs=n;
     if(sum!=p->total) goto bad;
 #ifdef NEG_BAD_TOTAL                  /* negative-control builds only */
     sum+=1;
@@ -1946,9 +2010,16 @@ __attribute__((noinline)) static u32 stock_nef(plan_t *p,u32 raw_only) {
     else if(EXISTS(p->fin)<0) stop_file(p->drive,S_MISSING,p->shot);
     else if(c1-c0>=p->budget) stop_file(p->drive,S_BUDGET,p->shot);
     if(nst==0) {                                                   /* HN31: for Turbo RAW review */
-        u32 mode=get32(p->q+0x20);
-        rt_record(RT,p->jid,mode==MODE_C30?30u:mode==MODE_C60?60u:mode==MODE_C15?(c20_on()?C15_FPS:15u):0u,
-                  get32(p->q+A_SKIP)!=SKIP_MARK);
+        u32 mode=get32(p->q+0x20),fps=mode==MODE_C30?30u:mode==MODE_C60?60u:mode==MODE_C15?(c20_on()?C15_FPS:15u):0u;
+        if(fps) {
+            volatile rp_t *r=rp(); u32 tot=SHOT_GET(ID_SHOTS);
+            u32 newest=tot==0x80000000u || LOAD32(p->m+0x2508)==LOAD32(G_SUBMITS)+tot;
+            if(RT->magic!=RT_MAGIC) rt_load((u32)(u8)p->drive);                       /* HN33: after power-on */
+            if(get32(p->q+0x18)<=1u && r->dirty) rt_save(r->drive);                  /* HN33: a new burst */
+            rt_record(RT,p->jid,fps,get32(p->q+A_SKIP)!=SKIP_MARK);
+            r->dirty++; r->drive=(u32)(u8)p->drive;
+            if(newest && (LOAD32(G_SUBMITS)==0u || now()-r->last_save>=1000000u)) rt_save((u32)(u8)p->drive);   /* HN33 */
+        }
     }
     return nst;
 bad:
@@ -2157,6 +2228,7 @@ __attribute__((used)) u32 precapture_review_interval(void) {
     u32 fps=0,n,image,key,g,left,k;
     if(!review_on()) return SERIES_INTERVAL();
     image=GUI_GET(ID_PLAY_IMAGE); key=rt_key(image);                 /* HN31 */
+    if(image && RT->magic!=RT_MAGIC) rt_load('A'+(image>>29));        /* HN33: after power-on */
     if(RT->magic==RT_MAGIC && RT->pend_ms && (key==RT->pend_key || key+1u==RT->pend_key)) {
         k=RT->pend_ms; RT->pend_ms=0; return k;                       /* the step just made: the target's time */
     }
@@ -2191,18 +2263,34 @@ __attribute__((used)) u32 precapture_review_interval(void) {
 #define PLAY_END_UI ((void (*)(void))0x40682654ul)
 #define AUTO_STOP ((void (*)(void))0x4063e14cul)            /* state 0, timer 0x38 off */
 #define AUTO_ARM ((void (*)(void))0x4063de1cul)             /* re-arm if the screen allows it (0x4063de9c) */
+/* The series of a playback image: its last file number (the next series' first - 1, else the list's last); 0 if the
+ * image is not in a series list the queries describe. */
+__attribute__((noinline)) static u32 review_end(u32 image,u32 *end) {
+    u32 last,next,info[4]={0,0,0,0};
+    if(!image || !SERIES_INFO(image,info) || !info[3]) return 0;
+    last=info[3];                                          /* the list's last image */
+    if(DCF_REST(image)!=DCF_REST(last) || DCF_FILE(image)>DCF_FILE(last)) return 0;
+    *end=DCF_FILE(last);
+    next=SERIES_STEP(image,1u,1u);                         /* the next series' first image */
+    if(next && DCF_REST(next)==DCF_REST(image) && DCF_FILE(next)>DCF_FILE(image) && DCF_FILE(next)-1u<*end) *end=DCF_FILE(next)-1u;
+    return 1;
+}
+/* The frame before the target becomes the image on screen without the change notification, so the stock move by one
+ * shows the target (r17). */
+__attribute__((noinline)) static void review_preposition(u32 image,u32 at) {
+    u32 before,info[4]={0,0,0,0}; u8 changed=0;
+    if(at-1u<=DCF_FILE(image)) return;
+    before=DCF_REST(image)|(at-1u)<<5;
+    if(SERIES_INFO(before,info) && info[3]) PROP_STORE(ID_PLAY_IMAGE,before,&changed);
+}
 __attribute__((used)) u32 precapture_review_advance(u32 count) {
-    u32 fps=0,n=0,image,last,next,at,before,end,g,left=0,ms,info[4]={0,0,0,0}; u8 changed=0;
+    u32 fps=0,n=0,image,at,end,g,left=0,ms;
     if(count!=1u || !review_on()) return PLAY_MOVE(count);
     image=GUI_GET(ID_PLAY_IMAGE);
+    if(image && RT->magic!=RT_MAGIC) rt_load('A'+(image>>29));        /* HN33: after power-on */
     g=image?rt_find(RT,image,&fps,&left):RT_NONE;                   /* HN31: a frame the writer recorded */
     if(g==RT_NONE && !(n=review_plan(&fps))) return PLAY_MOVE(count);
-    if(!image || !SERIES_INFO(image,info) || !info[3]) return PLAY_MOVE(count);
-    last=info[3];                                          /* the list's last image */
-    if(DCF_REST(image)!=DCF_REST(last) || DCF_FILE(image)>DCF_FILE(last)) return PLAY_MOVE(count);
-    end=DCF_FILE(last);
-    next=SERIES_STEP(image,1u,1u);                         /* the next series' first image */
-    if(next && DCF_REST(next)==DCF_REST(image) && DCF_FILE(next)>DCF_FILE(image) && DCF_FILE(next)-1u<end) end=DCF_FILE(next)-1u;
+    if(!review_end(image,&end)) return PLAY_MOVE(count);
     if(DCF_FILE(image)>=end) {  /* the stock series end, 0x4061c708..0x4061c748 (pre-move check 0x406326b8 gave 0) */
         if(PLAY_MODE()==2u) PLAY_END_NOTE(0x166u);
         PLAY_END_UI(); AUTO_STOP(); AUTO_ARM();
@@ -2215,11 +2303,26 @@ __attribute__((used)) u32 precapture_review_advance(u32 count) {
         at=DCF_FILE(image)+review_steps(n,fps);
         if(at>end) at=end;
     }
-    if(at-1u>DCF_FILE(image)) {
-        before=DCF_REST(image)|(at-1u)<<5;
-        info[0]=info[1]=info[2]=info[3]=0;
-        if(SERIES_INFO(before,info) && info[3]) PROP_STORE(ID_PLAY_IMAGE,before,&changed);
-    }
+    review_preposition(image,at);
+    return PLAY_MOVE(count);
+}
+/* HN34: series playback with the button ("Start series playback", e.g. Fn1; camera log x1). The playback's button handler
+ * (0x4063395c) runs again every 33 ms (after ~0.5 s) while it plays (the button again pauses: no more repeats), shows the
+ * image on screen and moves by one: b 0x4061c658 at 0x406339d0, here. For frames HN31 recorded, each real frame is held
+ * for its capture time (repeats inside it move nothing) and then the move goes to the next real frame, as in the auto
+ * playback. The series end stays the handler's own (it stops before the move). Other frames: the stock move. */
+__attribute__((used)) u32 precapture_button_step(u32 count) {
+    u32 fps=0,image,end,g,left=0,ms,at,t; volatile rp_t *r;
+    if(count!=1u || !review_on()) return PLAY_MOVE(count);
+    image=GUI_GET(ID_PLAY_IMAGE);
+    if(image && RT->magic!=RT_MAGIC) rt_load('A'+(image>>29));        /* HN33 */
+    g=image?rt_find(RT,image,&fps,&left):RT_NONE;
+    if(g==RT_NONE || !review_end(image,&end) || DCF_FILE(image)>=end) return PLAY_MOVE(count);
+    r=rp(); t=(u32)now();
+    if(t-r->bt_last<r->bt_hold) return 1;                             /* this frame's time is not over */
+    at=rt_plan(RT,DCF_FILE(image),g,left,fps,end,&ms);
+    review_preposition(image,at);
+    r->bt_last=t; r->bt_hold=ms*1000u>16000u?ms*1000u-16000u:0u;        /* repeats are 33 ms apart: round to the nearest */
     return PLAY_MOVE(count);
 }
 /* State 0x275 entry callback (stock 0x4059325c): cursor and selection mark on the chosen row. */

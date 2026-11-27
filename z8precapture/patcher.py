@@ -147,6 +147,7 @@ def review_edits(eg, code, symbols):
     for at, old_to, entry, tail, why in (
             (0x40593184, 0x403F645C, 'precapture_review_icon', True, 'speed value icon in the options page refresh'),
             (0x40632310, 0x4061C658, 'precapture_review_advance', True, 'image move in the auto playback tick (usual branch)'),
+            (0x406339D0, 0x4061C658, 'precapture_button_step', True, 'image move of the series playback button (HN34)'),
             (0x4061C898, 0x4063E348, 'precapture_review_interval', False, 'auto playback start interval'),
             (0x406322DC, 0x4063E348, 'precapture_review_interval', False, 'auto playback tick interval')):
         out.append(dict(offset=at - BASE, old=branch(at, old_to, tail), new=branch(at, entries[entry], tail),
