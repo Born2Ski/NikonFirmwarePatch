@@ -123,8 +123,13 @@ def compose(eg, features, compiler='clang', code_source='prebuilt', *, check_rec
         code_menu,entries=unit('precapture-menu')
         require(0x409F0000+len(code)<=DX_AT,'Pre-capture code reaches the DX lens switch')
         strings.add('raw-extras',extras_strings(eg))
-        for site,old,new,why in raw_menu(eg,code_menu,entries,photo):
+        for site,old,new,why in raw_menu(eg,code_menu,entries,photo,fast=not modules):
             img.put(site-0x40160000,new,why,expect=old)
+        if not modules:                    # HN29 Fast card writes (z8nvme) in the video groups' free area: photo/RAW only
+            from z8nvme.patcher import edits as nvme_edits
+            code_nv,meta_nv=load('nvme',code_source,compiler)
+            for e in nvme_edits(eg,code_nv,meta_nv['symbols']):img.put(e['offset'],e['new'],e['purpose'],expect=e['old'])
+            detail['fast-card-writes']=dict(code_bytes=len(code_nv),switch='RAW extras row, byte 0xa03d732a6, default On')
         detail['precapture']=dict(code_sha256=meta['sha256'],code_bytes=len(code),diagnostics=False,
                                   space_fallback=True,remaining_count=True,dx=True,lossless_fallback='HE*')
         # HN28 RAW extras: C20 (HN24), Turbo RAW review (HN27), DX lens: FX area and the release-mode/pre-release banks
@@ -147,7 +152,7 @@ def compose(eg, features, compiler='clang', code_source='prebuilt', *, check_rec
         detail['release-mode-banks']=dict(edits=len(rb),code_at=hex(RB_AT),code_bytes=len(rb[0]['new']),prerelease=True,
                                           switches=True)
         detail['raw-extras']=dict(byte='0xa03d732a5',bits='0 Turbo RAW, 1 DX lens: FX area, 2 C20, 3 release mode per bank, '
-                                  '4 pre-release per bank, 5 Turbo RAW review')
+                                  '4 pre-release per bank, 5 Turbo RAW review; Fast card writes in 0xa03d732a6 (photo/RAW selections)')
     if photo:
         from z8pixelshift.patcher import build_main
         code,meta=load('pixelshift',code_source,compiler)

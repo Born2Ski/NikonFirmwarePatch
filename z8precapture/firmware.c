@@ -41,6 +41,9 @@
  * HN28: RAW extras (Photo shooting menu row 2, z8precapture/menu): six switches in the Turbo RAW byte. Here: Turbo RAW
  * (HN26), C20 (HN24's frame selector, C15 HE partial decoding and the review rate; the label, icons and pre-release
  * counts are switched in the menu unit) and Turbo RAW review (HN27).
+ * HN29: Fast card writes (RAW extras row, byte 0xA03D732A6, z8nvme): the writer marks each NEF (begin, whether more frames of the burst
+ * are waiting, end) so the CFexpress card is written faster while it writes a NEF (no bus rate limit, 512-byte packets,
+ * the per-file card flush only for the burst's last NEF); z8nvme reads the switch.
  * Public adapter: no card configuration, diagnostic footer off by default. */
 typedef unsigned char u8;
 typedef unsigned short u16;
@@ -250,6 +253,7 @@ typedef long s64;
 #define X_RELBANK 8u                /* release mode per photo shooting menu bank (z8relbank) */
 #define X_PREBANK 16u               /* pre-/post-release burst per photo shooting menu bank (z8relbank) */
 #define X_REVIEW 32u                /* HN27: Turbo RAW review speed row */
+/* HN29 Fast card writes has its own byte 0xA03D732A6 (read by z8nvme and the menu unit; bit 6 here is unused) */
 #define X_DEFAULT (X_DX|X_C20|X_RELBANK|X_PREBANK|X_REVIEW|(TURBO_DEFAULT?X_TURBO:0u))
 static u32 extras(void) {
     u32 v=*(volatile u8 *)TURBO_BYTE;
@@ -1839,6 +1843,12 @@ static int seg(u8 *jp,u32 *n,u64 addr,u32 size,u64 *sum) {
     return 1;
 }
 /* Write the registered NEF with the stock writer in its explicit-segment mode 3. */
+/* HN29: markers for z8nvme (0x40A12000, photo/RAW selections), only when its table is there: 1 NEF begin, 7 more frames
+ * of this burst still to write (as HN18's newest-frame test: not the newest submitted one), 6 NEF done. */
+#define NVME_TABLE 0x40A12000ul
+static void nvme_mark(u32 code,u32 arg) {
+    if(LOAD32(NVME_TABLE+0x14)==0x444d564eu) ((void (*)(u32,u32))(NVME_TABLE+0x10))(code,arg);
+}
 __attribute__((noinline)) static u32 stock_nef(plan_t *p,u32 raw_only) {
     u8 *wk=p->wk,*jp=wk+JP,*a=wk+JA,*d=wk+JD,*t=wk+JT;
     const lay_t *L=&p->L;
@@ -1892,6 +1902,8 @@ __attribute__((noinline)) static u32 stock_nef(plan_t *p,u32 raw_only) {
         sv=LOAD32(sw);
         if(sv && !(sv&0xC0000010u)) STORE32(sw,(sv&~15u)|2u); else sw=0;
     }
+    nvme_mark(1,p->shot);
+    { u32 tot=SHOT_GET(ID_SHOTS); nvme_mark(7,tot!=0x80000000u && LOAD32(p->m+0x2508)!=LOAD32(G_SUBMITS)+tot); }
     c0=now(); nst=ORIG_WRITE(0,3,(u64)jp); c1=now();
     if(sw) STORE32(sw,sv);
     if(nst!=0) stop_file(p->drive,S_WRITE_FAIL,p->shot);        /* the stock writer cancelled the member itself */
@@ -1981,6 +1993,7 @@ __attribute__((noinline,unused)) static u32 take(const job_t *jb,u64 J) {
     if(p->gfull) FREE(p->gfull);                                    /* HN19 */
     if(p->graw) FREE(p->graw);
     FREE(p->raw);
+    nvme_mark(6,0);                                                 /* HN29 */
 #ifndef NEG_LEAK_E                    /* negative-control builds only */
     if(!kept) release_e(jb);
 #else

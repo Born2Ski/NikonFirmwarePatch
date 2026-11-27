@@ -17,8 +17,8 @@ MENU = 'pre-capture RAW recording menu'
 # switch rows (hooks.S: extras_rows, extras_toggle, extras_refresh). Every record changed here is referenced only by
 # state 0x30 (its page, layout, callbacks and first row table).
 EXTRAS = 'pre-capture RAW extras menu'
-EXTRAS_STRINGS = (3250, 7)          # z8patch.shared.STRING_IDS['raw-extras']: Turbo RAW, RAW extras, DX lens: FX area,
-                                    # C20, Bank: release mode, Bank: pre-release, Turbo RAW review
+EXTRAS_STRINGS = (3250, 8)          # z8patch.shared.STRING_IDS['raw-extras']: Turbo RAW, RAW extras, DX lens: FX area,
+                                    # C20, Bank: release mode, Bank: pre-release, Turbo RAW review, Fast card writes
 TITLE, C20_LABEL, C15_LABEL = 3251, 3253, 2371
 PHOTO_ROWS, EXTRAS_ROW, PLAIN_ROW = 0x43DCF790, 2, 46   # row 46: Auto capture, a no-value row (pixel shift's row 45 too)
 ROW_STOCK = (0x43A, 0xFFFF, 0xFFFF, 0, 0x101041, 0xB44, 0x2CAA, 0x40004, 0xFFFFFFFF, 0xFFFFFFFF, 2)
@@ -50,11 +50,11 @@ C20_SITES = (
 )
 EXTRAS_TEXT = {     # labels only (no help text): the shared text area is small with every group selected
     'en': ('Turbo RAW', 'RAW extras', 'DX lens: FX area', None, 'Bank: release mode', 'Bank: pre-release',
-           'Turbo RAW review'),
+           'Turbo RAW review', 'Fast card writes'),
     'zh-CN': ('Turbo RAW', 'RAW extras', 'DX 镜头：FX 区域', None, '拍摄菜单库：释放模式', '拍摄菜单库：预拍选项',
-              'Turbo RAW 播放'),        # Chinese translated by AI from the English, with the camera's own terms
+              'Turbo RAW 播放', '存储卡快速写入'),        # Chinese translated by AI from the English, with the camera's own terms
     'zh-TW': ('Turbo RAW', 'RAW extras', 'DX 鏡頭：FX 區域', None, '拍攝選單庫：快門釋放模式', '拍攝選單庫：預先釋放捕捉',
-              'Turbo RAW 播放'),
+              'Turbo RAW 播放', '記憶卡快速寫入'),
 }
 LANGUAGES, TABLE_DIR, BLOB_DIR, FAMILY_STRING, STOCK_ENTRIES = 36, 0x311C5A0, 0x387AF58, 2222, 3137
 
@@ -87,7 +87,7 @@ def extras_strings(eg):
     return out
 
 
-def apply(image, code, entries, photo=False):
+def apply(image, code, entries, photo=False, fast=False):
     B = 0x40160000
     def branch(site,to,link):
         delta=to-site
@@ -141,7 +141,8 @@ def apply(image, code, entries, photo=False):
         EXTRAS + (': hidden-item list from 42B27784 (pixel shift shows 2C13h)' if photo else ': hidden-item list from 42B2778C (only 2C13h)')
 
     # State 0x30: its page record becomes state 0x29's ("Choose image area": settings page, list rectangles, footer)
-    # with state 0x30's layout, the six rows of hooks.S and their row-table pointers.
+    # with state 0x30's layout, the rows of hooks.S and their row-table pointers: six, or seven with Fast card writes
+    # (HN29, only when z8nvme is built in: photo/RAW selections).
     state = struct.unpack_from('<12Q', image, STATES + 96 * PAGE_STATE)
     require(state[5] == CALLBACKS_30 and state[10] == PAGE_30, 'RAW extras: unexpected state 0x30')
     page30 = image[init_offset(PAGE_30):init_offset(PAGE_30) + 0x50]
@@ -151,8 +152,9 @@ def apply(image, code, entries, photo=False):
             struct.unpack_from('<4Q', page29) == (0x80001000, LAYOUT_29, 0x43DD28D0, 0x43DD2928), 'RAW extras: page records')
     page = bytearray(page29)
     struct.pack_into('<3Q', page, 8, LAYOUT_30, entries['extras_rows'], entries['extras_events'])
-    struct.pack_into('<H', page, 0x20, 6)
-    yield PAGE_30 - INIT_VA + INIT_EG + B, bytes(page30), bytes(page), EXTRAS + ': state 0x30 page record (6 switch rows)'
+    rows = 7 if fast else 6
+    struct.pack_into('<H', page, 0x20, rows)
+    yield PAGE_30 - INIT_VA + INIT_EG + B, bytes(page30), bytes(page), EXTRAS + f': state 0x30 page record ({rows} switch rows)'
     # Layout: state 0x29's three resources, title "RAW extras".
     lay30 = image[LAYOUT_30 - B:LAYOUT_30 - B + 4 * 68]
     lay29 = image[LAYOUT_29 - B:LAYOUT_29 - B + 4 * 68]

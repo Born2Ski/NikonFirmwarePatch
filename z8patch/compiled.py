@@ -18,6 +18,7 @@ SPECS = {
     'precapture': dict(source='z8precapture/firmware.c', flags=FLAGS, cave=0x409F0000, limit=0x40A00000, entry='precapture_history_entry'),
     'pixelshift': dict(source='z8pixelshift/src/ps8.c', flags=FLAGS+['-DPS11_REVIEW_LAYOUT=0x409ec800ull'], cave=0x40990000, limit=0x409D8000, entry='psm_menu_action'),
     'pixelshift-af': dict(source='z8pixelshift/src/af_unit.c', flags=[f for f in FLAGS if f!='-mgeneral-regs-only']+['-ffp-contract=off'], cave=0x409D8000, limit=0x409DA000, entry='ps8_af_one_batch'),
+    'nvme': dict(source='z8nvme/nvme.c', flags=FLAGS, cave=0x40A12000, limit=0x40A1A000, entry='nvme_table'),   # HN29, photo/RAW selections
     'opengate': dict(source='z8opengate/src/d10_hooks.S', flags=['-target','aarch64-none-elf','-x','assembler-with-cpp','-DFULL_OUTPUT=1','-DWITH_Q3=1','-DQ3_STASH_RAM=0xa0ff50000','-DQ3_FINE_TABLE=0x40953000','-DQ3_BASIC_TABLE=0x409533f0','-DOG_TIER_DELTA=0x4000']),
 }
 SPECS.update({
@@ -50,7 +51,7 @@ def source_files(name):
         folder=ROOT/SPECS[name]['folder']
         return {p.relative_to(ROOT).as_posix():sha(p.read_bytes()) for p in sorted(folder.rglob('*'))
                 if p.is_file() and p.suffix in ('.py','.S','.json','.png')}
-    folder = ROOT/('z8precapture' if name=='precapture' else 'z8opengate/src' if name=='opengate' else 'z8pixelshift/src')
+    folder = ROOT/('z8precapture' if name=='precapture' else 'z8nvme' if name=='nvme' else 'z8opengate/src' if name=='opengate' else 'z8pixelshift/src')
     return {p.relative_to(ROOT).as_posix():sha(p.read_bytes()) for p in sorted(folder.iterdir()) if p.suffix in ('.c','.h','.inc','.S')}
 
 

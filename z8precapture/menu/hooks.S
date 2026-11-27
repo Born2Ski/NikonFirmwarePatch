@@ -112,9 +112,11 @@ raw_menu_size_alt:
 // 0x30, free in stock: only hidden rows of other menus list it). The switches live in one spare byte of settings group
 // 1Eh (after the one-byte setting 1E50h; saved with the group, not banked): 0x80 | bits once a switch was toggled here.
 // Before that the byte holds what the Turbo RAW row (03.12.t1..v11) wrote: 0 never set, 1 Turbo Off, 2 Turbo On; the
-// other switches then take their default. The pre-capture unit (firmware.c, extras()), z8relbank and z8dxlens decode
-// the same byte. Bits: 0 Turbo RAW, 1 DX lens: FX area, 2 C20, 3 release mode per bank, 4 pre-release per bank,
-// 5 Turbo RAW review.
+// other switches then take their default. The pre-capture unit (firmware.c, extras()), z8relbank, z8dxlens and z8nvme
+// decode the same byte. Bits: 0 Turbo RAW, 1 DX lens: FX area, 2 C20, 3 release mode per bank, 4 pre-release per bank,
+// 5 Turbo RAW review. Bit 6 (as extras_bits reports it) is Fast card writes (HN29, z8nvme; its row shows only when the
+// unit is built in), kept in its own spare byte 0xA03D732A6 (0 never set = On, else 0x80 | on), so a byte written by an
+// earlier firmware (bit 6 = 0) does not switch it off; bit 6 of the byte above is ignored (03.12.k1 stored it there).
 #ifndef TURBO_DEFAULT
 #define TURBO_DEFAULT 0
 #endif
@@ -123,25 +125,33 @@ raw_menu_size_alt:
 #define C15_LABEL 2371          // "C15" (release mode label, every language)
 #define C20_LABEL 3253          // "C20" (z8patch.shared raw-extras)
 
-// w0 = the switch bits; uses x8 only.
+// w0 = the switch bits (bit 6 from the HN29 byte); uses x8 only.
 extras_bits:
     movz x8,#0x32a5
     movk x8,#0x03d7,lsl #16
     movk x8,#0xa,lsl #32
     ldrb w0,[x8]
     tbz w0,#7,1f
-    and w0,w0,#0x7f
-    ret
+    and w0,w0,#0x3f
+    b 4f
 1:  mov w8,#X_DEFAULT
     cmp w0,#2
     b.ne 2f
     orr w0,w8,#1
-    ret
+    b 4f
 2:  cmp w0,#1
     b.ne 3f
     and w0,w8,#0xfffffffe
-    ret
+    b 4f
 3:  mov w0,w8
+4:  movz x8,#0x32a6                 // HN29 Fast card writes byte
+    movk x8,#0x03d7,lsl #16
+    movk x8,#0xa,lsl #32
+    ldrb w8,[x8]
+    tbz w8,#7,5f
+    bfi w0,w8,#6,#1
+    ret
+5:  orr w0,w0,#0x40                 // never set: On
     ret
 
 // Applies the switches to the camera's own initialized data; returns w0 = the bits. Uses x0 and x8..x9 (leaf after
@@ -193,15 +203,23 @@ extras_toggle:
     ldr w9,[x9,#0x18]
     mov w10,#ITEM_BASE
     sub w12,w9,w10
-    cmp w12,#6
+    cmp w12,#7
     b.hs 9f
     bl extras_bits
     mov w10,#1
     lsl w10,w10,w12
     eor w13,w0,w10
-    orr w11,w13,#0x80
+    cmp w12,#6
+    b.ne 5f
+    lsr w11,w13,#6                  // HN29: its own byte, 0x80 | on
+    and w11,w11,#1
+    orr w11,w11,#0x80
+    movz x8,#0x32a6
+    b 6f
+5:  and w11,w13,#0x3f
+    orr w11,w11,#0x80
     movz x8,#0x32a5
-    movk x8,#0x03d7,lsl #16
+6:  movk x8,#0x03d7,lsl #16
     movk x8,#0xa,lsl #32
     strb w11,[x8]
     bl extras_sync
@@ -235,7 +253,7 @@ extras_refresh:
     and w1,w1,#1
     bl original_405121E4
 2:  add w21,w21,#1
-    cmp w21,#6
+    cmp w21,#7
     b.lo 1b
     ldr x21,[sp,#32]
     ldp x19,x20,[sp,#16]
@@ -312,7 +330,8 @@ extras_rows:
     .word 3252, 0xffff, 0xffff, 0, 0x20901005, 0x1326, ITEM_BASE + 1, 0x40004, 0xffffffff, 0xffffffff, 2   // DX lens: FX area
     .word 3254, 0xffff, 0xffff, 0, 0x20901005, 0x1326, ITEM_BASE + 3, 0x40004, 0xffffffff, 0xffffffff, 2   // Bank: release mode
     .word 3255, 0xffff, 0xffff, 0, 0x20901005, 0x1326, ITEM_BASE + 4, 0x40004, 0xffffffff, 0xffffffff, 2   // Bank: pre-release
+    .word 3257, 0xffff, 0xffff, 0, 0x20901005, 0x1326, ITEM_BASE + 6, 0x40004, 0xffffffff, 0xffffffff, 2   // Fast card writes (HN29)
 .balign 8
 .global extras_events
 extras_events:
-    .quad 0x43e34940, 0x43e34940, 0x43e34940, 0x43e34940, 0x43e34940, 0x43e34940
+    .quad 0x43e34940, 0x43e34940, 0x43e34940, 0x43e34940, 0x43e34940, 0x43e34940, 0x43e34940

@@ -6,7 +6,7 @@ from z8patch.image import BASE, branch
 STRING_IDS = {'opengate-nraw': (3137,5), 'pixelshift': (3142,5), 'prores': (3147,6),
               'anamorphic': (3153,8), 'h265': (3161,56), 'log': (3217,8),
               'opengate-e1': (3225,9), 'sdr-heif': (3234,4), 'photo-areas': (3238,12),
-              'raw-extras': (3250,7)}
+              'raw-extras': (3250,8)}
 TEXT, TABLES, TABLES_END = 0x40A50000, 0x40A8C000, 0x40B00000   # E2: tables moved up 48 KiB for the open-gate help text;
 # HN28 (RAW extras labels): 64 KiB more, up to the Log code at 0x40B00000 (with every group 0x40AEE5D0.. was free)
 STRING_END = 3225                 # without the open-gate E1 strings (v0.4.0 layout)
