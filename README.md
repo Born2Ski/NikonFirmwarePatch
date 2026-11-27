@@ -2,6 +2,8 @@
 
 [简体中文](#简体中文) · [English](#english) · [功能预览 / Preview](#功能预览--feature-preview) · [Changelog](CHANGELOG.md)
 
+> **Born2Ski 分支 / Born2Ski fork:** 分支 `feature/raw-extras-menu` 的附加照片功能（RAW 预拍、Turbo RAW、存储卡快速写入等）、测试结果与版本标签见 [docs/born2ski-fork.md](docs/born2ski-fork.md)。The extra photo features of branch `feature/raw-extras-menu` (RAW pre-capture, Turbo RAW, Fast card writes and more), their test results and version tags: [docs/born2ski-fork.md](docs/born2ski-fork.md#english).
+
 ## 功能预览 / Feature preview
 
 英文模拟器菜单，点击可查看原图。Select a panel to view the original emulator screenshot.

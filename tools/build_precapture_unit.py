@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Compile the raw-precapture units and install them as resources/precapture.bin and resources/precapture-menu.bin.
+"""Compile the raw-precapture units and install them as resources/precapture.bin, resources/precapture-menu.bin and
+resources/nvme.bin (Fast card writes, photo/RAW selections).
 
 For a toolkit whose other prebuilt units come from the v0.5.0 release: the pre-capture unit and the RAW recording
-menu unit changed after that release, so they are compiled here and each must match the reviewed bytes pinned in
+menu unit changed after that release and z8nvme is new, so they are compiled here and each must match the reviewed bytes pinned in
 resources/compiled.json before it is written.
 """
 import argparse
@@ -15,7 +16,7 @@ import json
 from z8patch.compiled import compile_unit
 from z8prores.package import require, sha
 
-UNITS = ('precapture', 'precapture-menu')
+UNITS = ('precapture', 'precapture-menu', 'nvme')
 
 
 def main():
