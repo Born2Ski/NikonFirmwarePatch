@@ -239,6 +239,22 @@ typedef long s64;
 #define N_DX 3u                     /* DX: decode every 3rd frame */
 #define N_C60_HS 4u                 /* HN23: C60 HE* (DX decode ~50 ms): every 4th frame */
 #define N_C60_HE 3u                 /* HN23: C60 HE (DX decode ~30 ms): every 3rd frame */
+/* HN30 Auto N (replaces N_FX/N_DX/N_C60_* in the decision; camera test a1: C30 FX HE* 238 -> 462 frames): a frame is decoded if it is the first, the newest
+ * submitted one (HN18) or at least N frames after the last decoded one, with N the smallest value at which one decoded
+ * frame plus N-1 refused ones pass processing within N x max(frame interval, writer time per NEF):
+ * N = ceil((D - d) / (max(T, W) - d)), D = a decoded frame's processing (+10 %), d = a refused one's, T = frame interval,
+ * W = the writer's time per NEF (busy EMA + AN_PREP), capped at AN_NMAX. Calibration (test n7, FX HE* C30, N = 5): one
+ * group of 5 = 206 ms = D + 4 d with d = 15 ms -> D = 146 ms; the others scaled by their decode times (FX HE 70 ms, DX
+ * HE* 50, DX HE 30). A fast card gives FX HE* C30 N = 8, a slower one fewer (the decodes are then free). Also C30 FX HE
+ * (before: every frame decoded, ~14 fps). State in the RAM alias of the pre-capture window's free tail (the code window
+ * is read-only). */
+#define MODE_C30 3u
+#define AN_AT (0x409FBF00ul - 0x40200000ul + 0xA0F800000ul)
+typedef struct { u32 magic, last_dec, ema, t_begin, n; } an_t;
+#define AN ((volatile an_t *)AN_AT)
+#define AN_NMAX 12u
+#define AN_PREP 5500u                /* us: the writer's per-NEF work outside markers 1..6 (n7: ~5 ms) */
+#define AN_REC 0x100u                /* frame record: 'N' << 24 | N used (outside the aux CRC range) */
 #define TURBO_BYTE 0xa03d732a5ul    /* HN26: spare byte after setting 1E50h (1 byte) in settings group 1Eh */
 #ifndef TURBO_DEFAULT
 #define TURBO_DEFAULT 0             /* value 0 (never set): Off */
@@ -264,6 +280,19 @@ static u32 extras(void) {
 }
 static int turbo_on(void) { return (extras()&X_TURBO)!=0; }
 static int c20_on(void) { return (extras()&X_C20)!=0; }
+static void an_init(void) {
+    if(AN->magic!=0x4e545541u) { AN->last_dec=0; AN->ema=0; AN->t_begin=0; AN->n=0; AN->magic=0x4e545541u; }
+}
+static u32 auto_n(u32 mode,u32 fx,u32 hs) {          /* HN30 */
+    u32 t=mode==MODE_C60?16667u:mode==MODE_C15?(c20_on()?50000u:66667u):33333u;
+    u32 dd=fx?(hs?146000u:88000u):(hs?63000u:38000u),ds=fx?15000u:10000u,cw,c,n;
+    an_init();
+    cw=AN->ema?AN->ema+AN_PREP:0u; c=cw>t?cw:t;
+    dd+=dd/10u;
+    if(c<=ds+2000u) return AN_NMAX;
+    n=(dd-ds+(c-ds)-1u)/(c-ds);
+    return n<1u?1u:n>AN_NMAX?AN_NMAX:n;
+}
 #define G_SUBMITS 0xa03bc5634ul      /* frames submitted in this burst (+1 per stock submit 0x40f93098; 0 after 0x40f92fec) */
 #define SHOT_GET ((u32 (*)(u32))0x40ec44e4ul)   /* property read, as the submit sites use it */
 #define ID_SHOTS 0x4a05u             /* running shot total; M+0x2508 = this burst's count at submit + total */
@@ -627,13 +656,15 @@ __attribute__((used)) u32 hn5_tdec_sel(u64 r) {
      * HN24: in C15 (20 fps) also HE, with the N of the geometry (HN28: only while C20 is On).
      * HN26: only while Turbo RAW is On. */
     if(turbo_on() && e && (q=bound(r,e,Q_MARKED)) && (get32(q+A_VALUE)&0xffu)==13u &&
-       (sel==4 || get32(q+0x20)==MODE_C60 || (get32(q+0x20)==MODE_C15 && c20_on()))) {
+       (sel==4 || get32(q+0x20)==MODE_C60 || (get32(q+0x20)==MODE_C15 && c20_on()) ||
+        (get32(q+0x20)==MODE_C30 && LOAD32(e+0x38)==FX_DIMS))) {                       /* HN30: also C30 FX HE */
         u32 dims=LOAD32(e+0x38),seq=get32(q+0x18),n; u64 m=LOAD64(r+0x790);
-        if(get32(q+0x20)==MODE_C60) n=sel==4?N_C60_HS:N_C60_HE;
-        else n=dims==FX_DIMS?N_FX:N_DX;
-        if((dims==FX_DIMS || dims==DX_DIMS) &&
-           !(seq<=1u || (seq-1u)%n==0u || LOAD32(m+0x2508)==LOAD32(G_SUBMITS)+SHOT_GET(ID_SHOTS))) {
-            set32(q+A_SKIP,SKIP_MARK); aux_seal(q); sel|=HALF_FLAG;
+        if(dims==FX_DIMS || dims==DX_DIMS) {
+            n=auto_n(get32(q+0x20),dims==FX_DIMS,sel==4);
+            if(seq<=1u || seq<AN->last_dec) AN->last_dec=0;                          /* a new burst */
+            set32(q+AN_REC,0x4e000000u|n);
+            if(seq<=1u || seq-AN->last_dec>=n || LOAD32(m+0x2508)==LOAD32(G_SUBMITS)+SHOT_GET(ID_SHOTS)) AN->last_dec=seq;
+            else { set32(q+A_SKIP,SKIP_MARK); aux_seal(q); sel|=HALF_FLAG; }
         }
     }
     return sel;
@@ -1904,6 +1935,9 @@ __attribute__((noinline)) static u32 stock_nef(plan_t *p,u32 raw_only) {
     }
     nvme_mark(1,p->shot);
     { u32 tot=SHOT_GET(ID_SHOTS); nvme_mark(7,tot!=0x80000000u && LOAD32(p->m+0x2508)!=LOAD32(G_SUBMITS)+tot); }
+    an_init(); AN->t_begin=(u32)now()|1u;                                             /* HN30: writer pace */
+    { u32 nn=get32(p->q+AN_REC);                                                      /* diagnostic log only (z8nvme test units): decoded, N, pace */
+      nvme_mark(8,(get32(p->q+A_SKIP)!=SKIP_MARK)|((nn>>24)==0x4eu?(nn&0xffu)<<8:0u)|((AN->ema/100u)&0xffffu)<<16); }
     c0=now(); nst=ORIG_WRITE(0,3,(u64)jp); c1=now();
     if(sw) STORE32(sw,sv);
     if(nst!=0) stop_file(p->drive,S_WRITE_FAIL,p->shot);        /* the stock writer cancelled the member itself */
@@ -1994,6 +2028,11 @@ __attribute__((noinline,unused)) static u32 take(const job_t *jb,u64 J) {
     if(p->graw) FREE(p->graw);
     FREE(p->raw);
     nvme_mark(6,0);                                                 /* HN29 */
+    if(AN->magic==0x4e545541u && AN->t_begin) {                       /* HN30: the writer's busy time per NEF (EMA 1/4) */
+        u32 bz=((u32)now()|1u)-AN->t_begin;
+        if(bz<500000u) AN->ema=AN->ema?AN->ema-(AN->ema>>2)+(bz>>2):bz;
+        AN->t_begin=0;
+    }
 #ifndef NEG_LEAK_E                    /* negative-control builds only */
     if(!kept) release_e(jb);
 #else

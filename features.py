@@ -121,6 +121,7 @@ def compose(eg, features, compiler='clang', code_source='prebuilt', *, check_rec
         from z8precapture.menu.sites import apply as raw_menu, extras_strings
         from z8dxlens.patcher import runtime as dx_runtime, RUNTIME_AT as DX_AT
         code_menu,entries=unit('precapture-menu')
+        require(0x409F0000+len(code)<=0x409FBF00,'Pre-capture code reaches its Auto N state (HN30, RAM alias of 0x409FBF00)')
         require(0x409F0000+len(code)<=DX_AT,'Pre-capture code reaches the DX lens switch')
         strings.add('raw-extras',extras_strings(eg))
         for site,old,new,why in raw_menu(eg,code_menu,entries,photo,fast=not modules):
