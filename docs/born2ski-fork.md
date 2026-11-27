@@ -43,6 +43,22 @@ RAW only, ProGrade CFexpress 4.0 512 GB card unless noted. Each line compares tw
 | Fixed N → Auto N | C60 DX HE★ | 214–266 frames | 542 frames |
 | Fixed N → Auto N | C60 DX HE | 394–519 frames | 664 frames |
 
+#### Combined
+
+The features remove one limit after another, so they pay off together (C30, FX, HE★, RAW only, same card):
+
+| Build | Frames per burst | NEFs written per second | What limits it next |
+|---|---|---|---|
+| Every frame decoded (Turbo RAW Off) | 73 | ~8.6 | the decode, ~116 ms per frame |
+| + Turbo RAW (every 5th frame decoded) | 129 | 20.4 | the card writes (987 MB/s cap, a flush per file) |
+| + Fast card writes | 238 | 24.2 | the decoded frames: the writer waits ~70 ms before every 5th NEF |
+| + Auto N (N picked from the writer's pace, 8 here) | 462 | 30 (= capture) until the card's own buffer is used up (~300 frames), then ~22 | the card's buffer, then the camera's frame buffer |
+
+Fast card writes alone changes little on a build that decodes every frame, and Turbo RAW alone stops at the card. With all
+three, C30 FX HE★ RAW runs about 15 s at 30 fps (462 frames including pre-release), 6× the burst with every frame decoded.
+C60 DX HE★: 203 frames with every frame decoded, 267 with Turbo RAW, 542 with all three. C30 FX HE keeps up with 30 fps
+throughout (485 frames in 16 s, ended by releasing the shutter).
+
 ### Versions
 
 | Tag | Firmware | Commit | Adds |
@@ -122,6 +138,21 @@ RAW 预拍连拍（野生动物摄影）。代码位于分支 `feature/raw-extra
 | 固定 N → 自动 N | C30 FX HE | 约每秒 14 张（每帧都解码） | 485 张，跟上每秒 30 张 |
 | 固定 N → 自动 N | C60 DX HE★ | 214–266 张 | 542 张 |
 | 固定 N → 自动 N | C60 DX HE | 394–519 张 | 664 张 |
+
+#### 组合效果
+
+这些功能依次消除一个又一个瓶颈，因此组合起来才真正见效（C30、FX、HE★、仅 RAW、同一张存储卡）：
+
+| 构建 | 每次连拍张数 | 每秒写入 NEF 数 | 下一个限制 |
+|---|---|---|---|
+| 每帧都解码（Turbo RAW 关） | 73 | 约 8.6 | 解码，每帧约 116 毫秒 |
+| + Turbo RAW（每第 5 帧解码） | 129 | 20.4 | 存储卡写入（每秒 987 MB 的限速、每个文件一次 Flush） |
+| + 存储卡快速写入 | 238 | 24.2 | 解码帧：写入器在每第 5 个 NEF 前约等待 70 毫秒 |
+| + 自动 N（按写入器速度选择 N，此处为 8） | 462 | 在存储卡自身缓存用尽前为 30（= 拍摄速度，约 300 张），之后约 22 | 存储卡缓存，然后是相机的帧缓存 |
+
+单独使用存储卡快速写入时，在每帧都解码的构建上几乎没有提升；单独使用 Turbo RAW 时则受限于存储卡。三者组合时，C30 FX HE★ RAW
+以每秒 30 张连续拍摄约 15 秒（含预拍共 462 张），是每帧都解码时的 6 倍。C60 DX HE★：每帧都解码 203 张，Turbo RAW 267 张，
+三者组合 542 张。C30 FX HE 全程跟上每秒 30 张（16 秒 485 张，松开快门结束）。
 
 ### 版本
 
