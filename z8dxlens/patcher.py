@@ -88,7 +88,7 @@ def edits(eg):
 # the UI disable-list table (mov x8,#0xdf78; movk x8,#0x42de,lsl #16; movk #0,lsl #32; movk #0,lsl #48) branch to
 # stubs that set x8 to the stock table or to a copy with the fixed edits' 28 list changes, then return after the four
 # instructions. A value without bit 7 (never toggled, or the Turbo RAW row's 1/2) means the default: On.
-RUNTIME_AT, RUNTIME_END = 0x409FC000, 0x409FF000   # free tail of the pre-capture unit's window, below the RAW menu unit
+RUNTIME_AT, RUNTIME_END = 0x409FC000, 0x409FEB00   # free tail of the pre-capture unit's window; 0x409FEB00..0x409FF000 = HN31's review table (RAM alias), then the RAW menu unit
 EXTRAS, DX_BIT = 0xA03D732A5, 1
 READERS = (0x403A0390, 0x403A1674, 0x403A35E8, 0x403D581C, 0x4056A0C0)   # mov x8,#0xdf78 of each table reader
 TABLE_ENTRIES = 489                                 # items 0..0x1E8 (the first reader rejects items above 0x1E8)

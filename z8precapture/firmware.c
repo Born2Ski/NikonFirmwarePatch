@@ -255,6 +255,8 @@ typedef struct { u32 magic, last_dec, ema, t_begin, n; } an_t;
 #define AN_NMAX 12u
 #define AN_PREP 5500u                /* us: the writer's per-NEF work outside markers 1..6 (n7: ~5 ms) */
 #define AN_REC 0x100u                /* frame record: 'N' << 24 | N used (outside the aux CRC range) */
+#include "review_table.inc"           /* HN31 */
+#define RT ((rt_t *)(0x409FEB00ul - 0x40200000ul + 0xA0F800000ul))    /* 1248 B in the RAM alias of 0x409FEB00..0x409FF000 (above the DX module's window) */
 #define TURBO_BYTE 0xa03d732a5ul    /* HN26: spare byte after setting 1E50h (1 byte) in settings group 1Eh */
 #ifndef TURBO_DEFAULT
 #define TURBO_DEFAULT 0             /* value 0 (never set): Off */
@@ -1943,6 +1945,11 @@ __attribute__((noinline)) static u32 stock_nef(plan_t *p,u32 raw_only) {
     if(nst!=0) stop_file(p->drive,S_WRITE_FAIL,p->shot);        /* the stock writer cancelled the member itself */
     else if(EXISTS(p->fin)<0) stop_file(p->drive,S_MISSING,p->shot);
     else if(c1-c0>=p->budget) stop_file(p->drive,S_BUDGET,p->shot);
+    if(nst==0) {                                                   /* HN31: for Turbo RAW review */
+        u32 mode=get32(p->q+0x20);
+        rt_record(RT,p->jid,mode==MODE_C30?30u:mode==MODE_C60?60u:mode==MODE_C15?(c20_on()?C15_FPS:15u):0u,
+                  get32(p->q+A_SKIP)!=SKIP_MARK);
+    }
     return nst;
 bad:
 #ifndef NEG_NO_CANCEL                 /* negative-control builds only */
@@ -2141,10 +2148,22 @@ static u32 review_release_interval(void) {
     mode=GUI_GET(ID_GRELMODE);
     return mode==0u?200u:mode<=2u?100u:33u;
 }
+/* HN31 (Auto N, HN30, decodes frames at irregular steps): frames the writer recorded (review_table.inc: RAM, since power-on,
+ * the last 8192 frames) step to the next frame with real previews at least 33 ms of capture time on, within the series,
+ * and each is shown for the capture time to the next real one (the step stores it for the timer restart in the stock
+ * move). Other frames (before power-on, or not written by the pre-capture writer) keep the fixed N of the settings. */
 /* Original: bl 0x4063e348 at 0x4061c898 (auto playback start) and 0x406322dc (tick handler). */
 __attribute__((used)) u32 precapture_review_interval(void) {
-    u32 fps=0,n;
+    u32 fps=0,n,image,key,g,left,k;
     if(!review_on()) return SERIES_INTERVAL();
+    image=GUI_GET(ID_PLAY_IMAGE); key=rt_key(image);                 /* HN31 */
+    if(RT->magic==RT_MAGIC && RT->pend_ms && (key==RT->pend_key || key+1u==RT->pend_key)) {
+        k=RT->pend_ms; RT->pend_ms=0; return k;                       /* the step just made: the target's time */
+    }
+    if(image && (g=rt_find(RT,image,&fps,&left))!=RT_NONE) {           /* playback start: time to the next real frame */
+        k=rt_step(RT,g,left,fps,fps);                                 /* at most 1 s */
+        return rt_ms(k?k:1u,fps);
+    }
     if(!(n=review_plan(&fps))) return review_release_interval();
     return (1000u*review_steps(n,fps)+fps/2u)/fps;
 }
@@ -2173,9 +2192,11 @@ __attribute__((used)) u32 precapture_review_interval(void) {
 #define AUTO_STOP ((void (*)(void))0x4063e14cul)            /* state 0, timer 0x38 off */
 #define AUTO_ARM ((void (*)(void))0x4063de1cul)             /* re-arm if the screen allows it (0x4063de9c) */
 __attribute__((used)) u32 precapture_review_advance(u32 count) {
-    u32 fps=0,n,image,last,next,at,before,end,info[4]={0,0,0,0}; u8 changed=0;
-    if(count!=1u || !review_on() || !(n=review_plan(&fps))) return PLAY_MOVE(count);
+    u32 fps=0,n=0,image,last,next,at,before,end,g,left=0,ms,info[4]={0,0,0,0}; u8 changed=0;
+    if(count!=1u || !review_on()) return PLAY_MOVE(count);
     image=GUI_GET(ID_PLAY_IMAGE);
+    g=image?rt_find(RT,image,&fps,&left):RT_NONE;                   /* HN31: a frame the writer recorded */
+    if(g==RT_NONE && !(n=review_plan(&fps))) return PLAY_MOVE(count);
     if(!image || !SERIES_INFO(image,info) || !info[3]) return PLAY_MOVE(count);
     last=info[3];                                          /* the list's last image */
     if(DCF_REST(image)!=DCF_REST(last) || DCF_FILE(image)>DCF_FILE(last)) return PLAY_MOVE(count);
@@ -2187,8 +2208,13 @@ __attribute__((used)) u32 precapture_review_advance(u32 count) {
         PLAY_END_UI(); AUTO_STOP(); AUTO_ARM();
         return 1;
     }
-    at=DCF_FILE(image)+review_steps(n,fps);
-    if(at>end) at=end;
+    if(g!=RT_NONE) {                                                /* HN31: the next real frame, and its time */
+        at=rt_plan(RT,DCF_FILE(image),g,left,fps,end,&ms);
+        RT->pend_key=rt_key(DCF_REST(image)|at<<5); RT->pend_ms=ms;
+    } else {
+        at=DCF_FILE(image)+review_steps(n,fps);
+        if(at>end) at=end;
+    }
     if(at-1u>DCF_FILE(image)) {
         before=DCF_REST(image)|(at-1u)<<5;
         info[0]=info[1]=info[2]=info[3]=0;
