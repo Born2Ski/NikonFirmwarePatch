@@ -36,8 +36,8 @@ def verify_contract(old,new,features):
     # 36 offset arrays: native text offsets are byte-for-byte retained, added IDs
     # are present exactly for their selected modules. String IDs stay fixed across masks.
     ranges=[(3137,3142,framing),(3142,3147,photo),(3147,3153,quality),
-            (3153,3161,framing),(3161,3217,quality),(3217,3225,log),(3225,3234,framing),(3234,3238,photo),(3238,3250,photo),(3250,3258,raw)]
-    entries=3259 if raw else (3251 if photo else (3235 if framing else 3226))   # E1/E2 strings: framing; RAW extras: raw
+            (3153,3161,framing),(3161,3217,quality),(3217,3225,log),(3225,3234,framing),(3234,3238,photo),(3238,3250,photo),(3250,3259,raw)]
+    entries=3260 if raw else (3251 if photo else (3235 if framing else 3226))   # E1/E2 strings: framing; RAW extras: raw
     for language in range(36):
         table=read(new,'<Q',0x311C5A0+8*language)[0]
         original_table=read(old,'<Q',0x311C5A0+8*language)[0]

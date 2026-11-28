@@ -153,7 +153,8 @@ def compose(eg, features, compiler='clang', code_source='prebuilt', *, check_rec
         detail['release-mode-banks']=dict(edits=len(rb),code_at=hex(RB_AT),code_bytes=len(rb[0]['new']),prerelease=True,
                                           switches=True)
         detail['raw-extras']=dict(byte='0xa03d732a5',bits='0 Turbo RAW, 1 DX lens: FX area, 2 C20, 3 release mode per bank, '
-                                  '4 pre-release per bank, 5 Turbo RAW review; Fast card writes in 0xa03d732a6 (photo/RAW selections)')
+                                  '4 pre-release per bank, 5 Turbo RAW review; 0xa03d732a6: bit 0 Fast card writes (photo/RAW selections), '
+                                  'bit 1 set = Continue when buffer full Off (HN35)')
     if photo:
         from z8pixelshift.patcher import build_main
         code,meta=load('pixelshift',code_source,compiler)

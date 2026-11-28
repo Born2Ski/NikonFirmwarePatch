@@ -44,7 +44,13 @@
  * HN29: Fast card writes (RAW extras row, byte 0xA03D732A6, z8nvme): the writer marks each NEF (begin, whether more frames of the burst
  * are waiting, end) so the CFexpress card is written faster while it writes a NEF (no bus rate limit, 512-byte packets,
  * the per-file card flush only for the burst's last NEF); z8nvme reads the switch.
+ * HN35: Continue when buffer full (RAW extras row, bit 1 of byte 0xA03D732A6 set = Off, default On): with RAW in Image
+ * quality a C15/C20/C30/C60 burst no longer ends when the buffer is full; sensor frames without room become non-photos
+ * (as C15 skips every 2nd frame) and the burst goes on at the card's pace until the button is released.
  * Public adapter: no card configuration, diagnostic footer off by default. */
+#ifndef BUFFER_LOG
+#define BUFFER_LOG 0                  /* 1 = HN35 test log X:\Z8BUFnn.BIN per burst (03.12.y1/y2); everyday 0 */
+#endif
 typedef unsigned char u8;
 typedef unsigned short u16;
 typedef unsigned int u32;
@@ -422,6 +428,50 @@ __attribute__((noinline)) static void rt_save(u32 drive) {
     FREE(raw);
 }
 
+#if BUFFER_LOG
+/* HN35 test log (v2): per burst (sequence state 3; a new burst after 250 ms without a state-3 frame) the counts below and one
+ * 2-bit code per frame (0 no selection: stock stop or end, 1 HN35 skip (no room), 2 not a photo by the selector (C15/C20),
+ * 3 photo), in the RAM alias of 0x409FE200..0x409FEA48 (the DX module window above its code, which ends at 0x409FE1B0).
+ * The writer saves it to X:\Z8BUFnn.BIN (nn = burst % 100) after the burst's last NEF. */
+typedef struct { u32 magic, burst, frames, holds, card, skips, photos, others; int min_buf, max_pend, first_hold, saved;
+                 u64 t0, tl; u32 ms_first_hold, ms_last, f55, f56, stops, pad; u8 code[2048]; } bl_t;   /* f55/f56: frames
+                 with stop flag 0x55/0x56 set; stops: stock stop by count with the switch Off; card: by the card */
+#define BL ((volatile bl_t *)(0x409FE200ul - 0x40200000ul + 0xA0F800000ul))
+#define BL_MAGIC 0x32465542u         /* "BUF2" */
+static void bl_frame(int buf,int all,int pend,int hold,int on) {
+    volatile bl_t *l=BL; u64 t=now(); u32 n;
+    if(l->magic!=BL_MAGIC || t-l->tl>250000u) {
+        n=l->magic==BL_MAGIC?l->burst+1u:1u;
+        zero((u8 *)l,(u32)sizeof(bl_t));
+        l->magic=BL_MAGIC; l->burst=n; l->t0=t; l->min_buf=0x7fffffff; l->first_hold=-1; l->saved=-1;
+    }
+    l->tl=t; l->ms_last=(u32)((t-l->t0)/1000u); l->frames++;
+    if(buf<l->min_buf) l->min_buf=buf;
+    if(pend>l->max_pend) l->max_pend=pend;
+    if(hold) { l->holds++; if(l->first_hold<0) { l->first_hold=(int)l->frames-1; l->ms_first_hold=l->ms_last; } }
+    else if(all<=pend) { if(on) l->card++; else l->stops++; }
+}
+static void bl_code(u32 c) {
+    volatile bl_t *l=BL; u32 i;
+    if(l->magic!=BL_MAGIC || !l->frames) return;
+    i=l->frames-1u;
+    if(i<8192u) l->code[i>>2]|=(u8)(c<<((i&3u)*2u));
+    if(c==1u) l->skips++; else if(c==3u) l->photos++; else l->others++;
+}
+__attribute__((noinline)) static void bl_save(u32 drive) {
+    volatile bl_t *l=BL; char p[16]; int fd; u8 *raw,*b; u32 n=0,k;
+    if(drive<'A' || drive>'B' || l->magic!=BL_MAGIC || l->saved==(int)l->burst) return;
+    raw=(u8 *)ALLOC((u32)sizeof(bl_t)+63u,0); if(!raw) return;
+    b=(u8 *)(((u64)raw+63)&~63ul);
+    copy(b,(const u8 *)l,(u32)sizeof(bl_t));
+    copy((u8 *)p,(const u8 *)"A:\\Z8BUF00.BIN",15); p[0]=(char)drive; k=l->burst%100u; p[8]=(char)('0'+k/10u); p[9]=(char)('0'+k%10u);
+    fd=OPEN(p,0x301,0x20);                                                      /* write, create, truncate */
+    if(fd>=0) { CLEAN(b,(u32)sizeof(bl_t)); WRITE(fd,(u64)b,(u32)sizeof(bl_t),&n); CLOSE(fd); }
+    l->saved=(int)l->burst;
+    FREE(raw);
+}
+#endif
+
 /* ---------------- frame record in the E allocation tail ---------------- */
 /* E is a resource descriptor: E+8 -> {data_base, data_bytes}; E+0x30 type/format/dims,
  * E+0x40 payload. The 512 bytes past OLD_ALLOCATION exist only because the build enlarges
@@ -766,6 +816,72 @@ __attribute__((used)) u32 precapture_frame_skip(u32 index,u32 mode) {
         return n%(fps/C15_FPS)!=0u;
     }
     return FRAME_SELECT(index,mode);
+}
+/* HN35: Continue when buffer full. In a burst (HSFC sequence state 3, jump-table case 0x40f80608 of the frame handler
+ * 0x40f7f4dc) the stock code ends the burst (stop flag 0xa03bc2cd8) once the free frames 0x40f97a7c() = max(0,
+ * [0xa0292bb90]) are at most the photos captured but not yet submitted (capture counter 0x12 at 0xa03bc5fa0 + 0x48:
+ * +1 per photo at 0x40f80b34, -1 per submit at 0x40f6ff68), or on four other conditions (flags 0x67, 0x18, 0x55, 0x56).
+ * The remaining-count calculation 0x40f98784 (rerun on pool 0x39 events, 0x40f963f8) stores the free frames of the
+ * buffer alone at 0xa0292bb9c and their minimum with the card's remaining frames at 0xa0292bb90. With RAW in Image
+ * quality and the switch On:
+ *   K (bl 0x40f97a7c at 0x40f80608): when the buffer alone is the limit, one frame more than the pending photos, so the
+ *     burst does not end; otherwise the stock value (a full card still ends the burst);
+ *   F2 (the burst's photo-frame selector call at 0x40f80a2c): a frame is not a photo while there is no room (buffer or
+ *     card, the stock condition); otherwise the selection of precapture_frame_skip.
+ * A non-photo frame takes no buffer (C15 runs the same way with every 2nd frame), so a photo is taken on the first
+ * sensor frame after the writer frees room, under exactly the stock condition for taking one.
+ * y1 (camera, 2026-11-27): K kept the count from ending the burst, but flag 0x55 ended it at the same frame: the pool
+ * 0x39 event handler sets it when pool 0x39 has no free frame at the E size (0x40f9a0b8: 0x4104d654(0x39, size) == 0;
+ * flag table [0xa03bc1e48]: +0 set, +8 clear, +0x20 test), and the stop test reads it first. Flag 0x56 follows a full
+ * buffer during pre-release (0x40f96804: set when 0xa03bc6a20, which 0x40f9a01c sets with 0x55, is 1). So also:
+ *   Q (the stop test's flag reads, blr x8 at 0x40f80668 (0x55) and 0x40f8067c (0x56)): read as clear;
+ *   F2 also makes a frame a non-photo while flag 0x55 is set (it is updated on every pool event, the free counts only
+ *     when the remaining-count calculation reruns).
+ * y2 (camera, 2026-11-27, SanDisk C30 FX HE*): 30 fps until the buffer filled, then 13.4 photos/s (the card's 13.2 NEF/s)
+ * until release; Off: the stock stop. */
+#define FREE_FRAMES ((u32 (*)(void))0x40f97a7cul)
+#define FREE_ALL 0xa0292bb90ul      /* min(buffer, card) free frames */
+#define FREE_BUF 0xa0292bb9cul      /* free frames of the buffer (pool 0x39 at the E size, hook S) */
+#define PENDING 0xa03bc5fe8ul       /* capture counter 0x12: photos captured, not yet submitted */
+#define X2_BYTE 0xa03d732a6ul       /* 0 never set; else 0x80 | bit 0 Fast card writes On (HN29, z8nvme) | bit 1 HN35 Off */
+static int keep_going(void) {
+    u32 b=LOAD8(X2_BYTE),t=LOAD32(G_QTYPE);
+    return (!(b&0x80u) || !(b&2u)) && hn_mode(LOAD32(G_MODE)) && (t==0u || t==1u);
+}
+#define FLAGS 0xa03bc1e48ul         /* the capture service's flag table (0x40ed3afc()); +0x20 = test(id) */
+static u32 flag_set(u32 id) { u64 t=LOAD64(FLAGS); return t?((u32 (*)(u32))LOAD64(t+0x20))(id)&1u:0u; }
+__attribute__((used)) u32 precapture_burst_room(void) {
+    u32 v=FREE_FRAMES(); int p=(int)LOAD32(PENDING),on=keep_going(),hold=on && (int)LOAD32(FREE_BUF)<=p;
+#if BUFFER_LOG
+    bl_frame((int)LOAD32(FREE_BUF),(int)LOAD32(FREE_ALL),p,hold,on);
+#endif
+    return hold?(u32)(p+1):v;
+}
+__attribute__((used)) u32 hn35_flag(u32 v,u32 id) {           /* Q: v = the stock test of flag id (0x55 or 0x56) */
+    (void)id;                                                     /* read only by the test log */
+#if BUFFER_LOG
+    if(v&1u) { volatile bl_t *l=BL; if(l->magic==BL_MAGIC) { if(id==0x55u) l->f55++; else l->f56++; } }
+#endif
+    return keep_going()?0u:v;
+}
+__asm__(".pushsection .text.hn35stub,\"ax\",%progbits\n"
+        ".global precapture_burst_flag_entry\n.type precapture_burst_flag_entry,%function\n"
+        "precapture_burst_flag_entry:\n\tstp x29, x30, [sp, #-32]!\n\tstr x19, [sp, #16]\n\tmov w19, w0\n"
+        "\tblr x8\n\tmov w1, w19\n\tbl hn35_flag\n\tldr x19, [sp, #16]\n\tldp x29, x30, [sp], #32\n\tret\n"
+        ".popsection\n");
+__attribute__((used)) u32 precapture_burst_frame(u32 index,u32 mode) {
+    u32 r;
+    if(keep_going() && ((int)LOAD32(FREE_ALL)<=(int)LOAD32(PENDING) || flag_set(0x55u))) {
+#if BUFFER_LOG
+        bl_code(1u);
+#endif
+        return 1u;
+    }
+    r=precapture_frame_skip(index,mode);
+#if BUFFER_LOG
+    bl_code(r&1u?2u:3u);
+#endif
+    return r;
 }
 __asm__(".pushsection .text.hn13stub,\"ax\",%progbits\n"
         ".global precapture_area_mode\n.type precapture_area_mode,%function\n"
@@ -2019,6 +2135,9 @@ __attribute__((noinline)) static u32 stock_nef(plan_t *p,u32 raw_only) {
             rt_record(RT,p->jid,fps,get32(p->q+A_SKIP)!=SKIP_MARK);
             r->dirty++; r->drive=(u32)(u8)p->drive;
             if(newest && (LOAD32(G_SUBMITS)==0u || now()-r->last_save>=1000000u)) rt_save((u32)(u8)p->drive);   /* HN33 */
+#if BUFFER_LOG
+            if(newest && LOAD32(G_SUBMITS)==0u) bl_save((u32)(u8)p->drive);                /* HN35 test log: burst over */
+#endif
         }
     }
     return nst;

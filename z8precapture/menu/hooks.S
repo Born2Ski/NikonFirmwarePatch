@@ -108,7 +108,7 @@ raw_menu_size_alt:
     b original_403ACCCC
 1:  ret
 
-// RAW extras (HN28): Photo shooting menu row 2 (item 0x2CAA, hidden in stock) opens a page of six switches (menu state
+// RAW extras (HN28): Photo shooting menu row 2 (item 0x2CAA, hidden in stock) opens a page of switches (menu state
 // 0x30, free in stock: only hidden rows of other menus list it). The switches live in one spare byte of settings group
 // 1Eh (after the one-byte setting 1E50h; saved with the group, not banked): 0x80 | bits once a switch was toggled here.
 // Before that the byte holds what the Turbo RAW row (03.12.t1..v11) wrote: 0 never set, 1 Turbo Off, 2 Turbo On; the
@@ -117,6 +117,8 @@ raw_menu_size_alt:
 // 5 Turbo RAW review. Bit 6 (as extras_bits reports it) is Fast card writes (HN29, z8nvme; its row shows only when the
 // unit is built in), kept in its own spare byte 0xA03D732A6 (0 never set = On, else 0x80 | on), so a byte written by an
 // earlier firmware (bit 6 = 0) does not switch it off; bit 6 of the byte above is ignored (03.12.k1 stored it there).
+// Bit 7 is Continue when buffer full (HN35, firmware.c), bit 1 of that same byte set = Off (so every byte an earlier
+// firmware wrote reads On).
 #ifndef TURBO_DEFAULT
 #define TURBO_DEFAULT 0
 #endif
@@ -125,7 +127,7 @@ raw_menu_size_alt:
 #define C15_LABEL 2371          // "C15" (release mode label, every language)
 #define C20_LABEL 3253          // "C20" (z8patch.shared raw-extras)
 
-// w0 = the switch bits (bit 6 from the HN29 byte); uses x8 only.
+// w0 = the switch bits (bits 6 and 7 from the HN29 byte); uses x8 only.
 extras_bits:
     movz x8,#0x32a5
     movk x8,#0x03d7,lsl #16
@@ -149,9 +151,11 @@ extras_bits:
     movk x8,#0xa,lsl #32
     ldrb w8,[x8]
     tbz w8,#7,5f
-    bfi w0,w8,#6,#1
-    ret
-5:  orr w0,w0,#0x40                 // never set: On
+    bfi w0,w8,#6,#1                 // bit 6: Fast card writes = byte bit 0
+    tbnz w8,#1,6f                   // HN35: byte bit 1 set = Continue when buffer full Off
+    orr w0,w0,#0x80
+6:  ret
+5:  orr w0,w0,#0xc0                 // never set: both On
     ret
 
 // Applies the switches to the camera's own initialized data; returns w0 = the bits. Uses x0 and x8..x9 (leaf after
@@ -203,16 +207,18 @@ extras_toggle:
     ldr w9,[x9,#0x18]
     mov w10,#ITEM_BASE
     sub w12,w9,w10
-    cmp w12,#7
+    cmp w12,#8
     b.hs 9f
     bl extras_bits
     mov w10,#1
     lsl w10,w10,w12
     eor w13,w0,w10
     cmp w12,#6
-    b.ne 5f
-    lsr w11,w13,#6                  // HN29: its own byte, 0x80 | on
-    and w11,w11,#1
+    b.lo 5f
+    ubfx w11,w13,#6,#1              // HN29/HN35: their own byte, 0x80 | Fast card writes On | Continue Off << 1
+    tst w13,#0x80
+    orr w10,w11,#2
+    csel w11,w11,w10,ne
     orr w11,w11,#0x80
     movz x8,#0x32a6
     b 6f
@@ -253,7 +259,7 @@ extras_refresh:
     and w1,w1,#1
     bl original_405121E4
 2:  add w21,w21,#1
-    cmp w21,#7
+    cmp w21,#8
     b.lo 1b
     ldr x21,[sp,#32]
     ldp x19,x20,[sp,#16]
@@ -319,7 +325,7 @@ c20_pre:
 c20_pair:
     .hword 2714, 2670
 
-// Page rows (44 bytes each, the stock switch row of "DX crop alert": label, no help, switch style 0x20901005 with
+// Page rows (Fast card writes last: the page lists 7 rows without z8nvme, 8 with it; 44 bytes each, the stock switch row of "DX crop alert": label, no help, switch style 0x20901005 with
 // resource 0x1326) and their row-table pointers (all the page's own table 0x43E34940, rewritten by sites.py).
 .balign 4
 .global extras_rows
@@ -330,8 +336,9 @@ extras_rows:
     .word 3252, 0xffff, 0xffff, 0, 0x20901005, 0x1326, ITEM_BASE + 1, 0x40004, 0xffffffff, 0xffffffff, 2   // DX lens: FX area
     .word 3254, 0xffff, 0xffff, 0, 0x20901005, 0x1326, ITEM_BASE + 3, 0x40004, 0xffffffff, 0xffffffff, 2   // Bank: release mode
     .word 3255, 0xffff, 0xffff, 0, 0x20901005, 0x1326, ITEM_BASE + 4, 0x40004, 0xffffffff, 0xffffffff, 2   // Bank: pre-release
+    .word 3258, 0xffff, 0xffff, 0, 0x20901005, 0x1326, ITEM_BASE + 7, 0x40004, 0xffffffff, 0xffffffff, 2   // Continue when buffer full (HN35)
     .word 3257, 0xffff, 0xffff, 0, 0x20901005, 0x1326, ITEM_BASE + 6, 0x40004, 0xffffffff, 0xffffffff, 2   // Fast card writes (HN29)
 .balign 8
 .global extras_events
 extras_events:
-    .quad 0x43e34940, 0x43e34940, 0x43e34940, 0x43e34940, 0x43e34940, 0x43e34940, 0x43e34940
+    .quad 0x43e34940, 0x43e34940, 0x43e34940, 0x43e34940, 0x43e34940, 0x43e34940, 0x43e34940, 0x43e34940

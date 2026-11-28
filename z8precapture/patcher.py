@@ -54,8 +54,15 @@ def edits(code, symbols):
     if c20(symbols):                               # HN24 (C15 at 20 fps) only when the unit carries the frame selector
         # HN28: the C15 pre-release frames (6/10/20 for 0.3/0.5/1 s, stock 5/8/15) follow the C20 switch at runtime
         # (menu unit, extras_c15_pre), so the stock table at 0x4cd59f0 stays.
-        for at in (0x40f807bc, 0x40f80a2c):                  # photo-frame selector calls
-            values[at - 0x40160000] = bl(at, entries['precapture_frame_skip'])
+        # photo-frame selector calls: pre-capture (sequence state 2) and the burst (state 3, HN35's no-room skip first)
+        values[0x40f807bc - 0x40160000] = bl(0x40f807bc, entries['precapture_frame_skip'])
+        values[0x40f80a2c - 0x40160000] = bl(0x40f80a2c, entries['precapture_burst_frame'])
+    # HN35 K: the burst's free-frame read (bl 0x40f97a7c, its only call) in the stop test of state 3 (0x40f80608)
+    require(code is not None and 'precapture_burst_room' in entries, 'Pre-capture unit lacks HN35')
+    values[0x40f80608 - 0x40160000] = bl(0x40f80608, entries['precapture_burst_room'])
+    # HN35 Q: the stop test's reads of flags 0x55 (no free frame in pool 0x39) and 0x56 (blr x8, w0 = the flag)
+    for at in (0x40f80668, 0x40f8067c):
+        values[at - 0x40160000] = bl(at, entries['precapture_burst_flag_entry'])
     for at in (0x40ec4640, 0x40ec6a8c, 0x40f24e08, 0x41014b1c, 0x410e71f8):
         values[at - 0x40160000] = branch(at, entries['precapture_cap_update'], tail=at == 0x40ec4640)
     # These are callback pointers in the initialized-data image, not AArch64 branches.
