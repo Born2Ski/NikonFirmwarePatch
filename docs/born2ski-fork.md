@@ -6,7 +6,7 @@
 
 This fork of [NikonFirmwarePatch](https://github.com/XinmiaoZhao/NikonFirmwarePatch) adds photo features on top of upstream
 v0.5.0, mostly for long RAW pre-capture bursts (wildlife). The work is on branch `feature/raw-extras-menu`, and every
-version tested on the camera is tagged (`photo-tools-v11.0` to `photo-tools-v15.0`). Everything here was tested on one Z8
+version tested on the camera is tagged (`photo-tools-v11.0` to `photo-tools-v16.0`). Everything here was tested on one Z8
 by the author. It is experimental firmware: the warnings of the upstream [README](../README.md#english) apply. Firmware
 files are never distributed. You build them yourself from Nikon's own C3.11 package (see [Build](#build)).
 
@@ -23,6 +23,7 @@ files are never distributed. You build them yourself from Nikon's own C3.11 pack
 | Release mode per photo shooting menu bank | With Extended menu banks On, each bank keeps its release mode, pre-release and post-release burst | PR #67 (release modes); pre-release part ready as a follow-up |
 | FX image area with DX lenses | Choose FX with a DX lens attached | #49; the maintainer will port it as a Custom Settings option, off by default |
 | Fast card writes (v13) | During pre-capture NEF writes: CFexpress slot rate limiter off, 512-byte packets, per-file flush deferred to the burst's last NEF | Fork only; proposed upstream |
+| Continue when buffer full (v16) | When the buffer is full, a RAW burst goes on at the card's pace until the shutter is released (like CH) instead of stopping | Fork only |
 | RAW extras menu (v12) | Photo shooting menu row 2: one switch for each feature above | Fork only |
 
 Details: [RAW pre-capture](raw-precapture.md#english), [release mode per bank](release-mode-banks.md#english),
@@ -42,6 +43,7 @@ RAW only, ProGrade CFexpress 4.0 512 GB card unless noted. Each line compares tw
 | Fixed N → Auto N | C30 FX HE | about 14 fps (every frame decoded) | 485 frames, keeps up at 30 fps |
 | Fixed N → Auto N | C60 DX HE★ | 214–266 frames | 542 frames |
 | Fixed N → Auto N | C60 DX HE | 394–519 frames | 664 frames |
+| Continue when buffer full Off → On (03.12.y2) | C30 FX HE★, SanDisk CFexpress 128 GB | 86 frames, stops at the full buffer | 316 frames in 20 s: 30 fps to the full buffer, then 13.4 photos/s until release |
 
 #### Combined
 
@@ -69,6 +71,7 @@ throughout (485 frames in 16 s, ended by releasing the shutter).
 | `photo-tools-v14.0` | 03.12.a2 | `7735834` | Auto N |
 | `photo-tools-v14.5` | 03.12.e1 | `30ecac5` | Turbo RAW review follows Auto N |
 | `photo-tools-v15.0` | 03.12.e3 | `5d19d26` | Turbo RAW review after power off/on and with the button |
+| `photo-tools-v16.0` | 03.12.y3 | `0b46aaf` | Continue when buffer full |
 
 ### Build
 
@@ -78,9 +81,9 @@ throughout (485 frames in 16 s, ended by releasing the shutter).
 3. `python tools/build_precapture_unit.py` compiles the pre-capture, RAW recording menu and `z8nvme` units, and checks each
    against the bytes pinned in `resources/compiled.json`. The pins come from Apple clang 21.0.0 (clang-2100.4.1.1); another
    compiler may produce different bytes, and the check then stops.
-4. `python patch.py Z_8_0311.bin --features still-photo-tools raw-precapture --version 03.12 --tag e3 --output build/v15`
-   gives v15: `Z_8_0312.bin` with SHA-256 `e4f82b73a54f833351e6d2cd23eb3358bb0ddb68c1cbd93a791ddfc8870cbaca`.
-5. `python verify.py Z_8_0311.bin build/v15/Z_8_0312.bin --features still-photo-tools raw-precapture --version 03.12 --tag e3`
+4. `python patch.py Z_8_0311.bin --features still-photo-tools raw-precapture --version 03.12 --tag y3 --output build/v16`
+   gives v16: `Z_8_0312.bin` with SHA-256 `6249b5c1085759fd953a89291bdb1c591b4021ac59d3f6326d22d6e28c6d7bae`.
+5. `python verify.py Z_8_0311.bin build/v16/Z_8_0312.bin --features still-photo-tools raw-precapture --version 03.12 --tag y3`
 
 Version and tag are labels only (the camera shows them); the code is C3.11's.
 
@@ -93,6 +96,9 @@ Version and tag are labels only (the camera shows them); the code is C3.11's.
 - **Fast card writes:** tested with one card (ProGrade CFexpress 4.0 512 GB). It applies only while pre-capture NEFs are
   written; a power loss in the middle of a burst can lose the NEFs written since the last flush. It and its menu row exist
   only in builds without the video groups.
+- **Continue when buffer full:** in the slowed part the photos come on whole sensor frames (33, 67 or 100 ms apart in
+  C30), and Turbo RAW review plays that part faster than real time. Post-release burst 1/2/3 s counts photos, not seconds;
+  use Max for long bursts. Tested with C30 FX HE★ on one card so far.
 - **C120 RAW is not supported.** An experiment recorded C120 NEFs in the camera, but common converters cannot open its
   4140 × 2756 HE RAW.
 - The remaining-frames counter does not count down during C15/C30 RAW bursts (as upstream).
@@ -103,7 +109,7 @@ Version and tag are labels only (the camera shows them); the code is C3.11's.
 
 本分支基于 [NikonFirmwarePatch](https://github.com/XinmiaoZhao/NikonFirmwarePatch) v0.5.0，增加了一些照片功能，主要用于长时间的
 RAW 预拍连拍（野生动物摄影）。代码位于分支 `feature/raw-extras-menu`，每个在相机上测试过的版本都有标签（`photo-tools-v11.0` 至
-`photo-tools-v15.0`）。所有内容都由作者在一台 Z8 上测试。这是实验固件，上游 [README](../README.md#简体中文) 中的风险说明同样适用。
+`photo-tools-v16.0`）。所有内容都由作者在一台 Z8 上测试。这是实验固件，上游 [README](../README.md#简体中文) 中的风险说明同样适用。
 不分发固件文件：请用尼康官方的 C3.11 固件包自行构建（见[构建](#构建)）。
 
 ### 功能
@@ -119,6 +125,7 @@ RAW 预拍连拍（野生动物摄影）。代码位于分支 `feature/raw-extra
 | 释放模式随照片拍摄菜单库切换 | “扩展菜单库”开启时，每个菜单库保存自己的释放模式、预拍连拍与释放后连拍 | PR #67（释放模式）；预拍部分已准备好作为后续 PR |
 | DX 镜头使用 FX 影像区域 | 安装 DX 镜头时可选择 FX | #49；维护者将以“自定义设定”选项（默认关闭）移植 |
 | 存储卡快速写入（v13） | 预拍写入 NEF 期间：CFexpress 插槽限速关闭、512 字节数据包、每个文件的 Flush 推迟到连拍最后一个 NEF | 仅本分支；已向上游提议 |
+| 缓存满时继续拍摄（v16） | 缓存写满后，RAW 连拍按存储卡的写入速度持续到松开快门（与 CH 相同），而不是停止 | 仅本分支 |
 | RAW 附加功能菜单（v12） | 照片拍摄菜单第 2 行：上述每个功能一个开关 | 仅本分支 |
 
 详细说明：[RAW 预拍](raw-precapture.md)、[释放模式随菜单库切换](release-mode-banks.md)、[DX 镜头使用 FX 影像区域](dx-lens-fx.md)、
@@ -138,6 +145,7 @@ RAW 预拍连拍（野生动物摄影）。代码位于分支 `feature/raw-extra
 | 固定 N → 自动 N | C30 FX HE | 约每秒 14 张（每帧都解码） | 485 张，跟上每秒 30 张 |
 | 固定 N → 自动 N | C60 DX HE★ | 214–266 张 | 542 张 |
 | 固定 N → 自动 N | C60 DX HE | 394–519 张 | 664 张 |
+| 缓存满时继续拍摄 关 → 开（03.12.y2） | C30 FX HE★，SanDisk CFexpress 128 GB | 86 张，缓存写满即停止 | 20 秒 316 张：缓存写满前每秒 30 张，之后每秒 13.4 张直到松开快门 |
 
 #### 组合效果
 
@@ -164,6 +172,7 @@ RAW 预拍连拍（野生动物摄影）。代码位于分支 `feature/raw-extra
 | `photo-tools-v14.0` | 03.12.a2 | `7735834` | 自动 N |
 | `photo-tools-v14.5` | 03.12.e1 | `30ecac5` | Turbo RAW 回放跟随自动 N |
 | `photo-tools-v15.0` | 03.12.e3 | `5d19d26` | Turbo RAW 回放在关机重开后及按钮回放时同样有效 |
+| `photo-tools-v16.0` | 03.12.y3 | `0b46aaf` | 缓存满时继续拍摄 |
 
 ### 构建
 
@@ -172,9 +181,9 @@ RAW 预拍连拍（野生动物摄影）。代码位于分支 `feature/raw-extra
 2. 将分支 `feature/raw-extras-menu` 的文件覆盖到解压后的工具包。
 3. `python tools/build_precapture_unit.py` 编译预拍、RAW 记录菜单与 `z8nvme` 三个单元，并逐一与 `resources/compiled.json` 中固定的
    字节核对。这些字节由 Apple clang 21.0.0（clang-2100.4.1.1）生成；其他编译器可能生成不同的字节，此时核对会停止。
-4. `python patch.py Z_8_0311.bin --features still-photo-tools raw-precapture --version 03.12 --tag e3 --output build/v15`
-   生成 v15：`Z_8_0312.bin`，SHA-256 为 `e4f82b73a54f833351e6d2cd23eb3358bb0ddb68c1cbd93a791ddfc8870cbaca`。
-5. `python verify.py Z_8_0311.bin build/v15/Z_8_0312.bin --features still-photo-tools raw-precapture --version 03.12 --tag e3`
+4. `python patch.py Z_8_0311.bin --features still-photo-tools raw-precapture --version 03.12 --tag y3 --output build/v16`
+   生成 v16：`Z_8_0312.bin`，SHA-256 为 `6249b5c1085759fd953a89291bdb1c591b4021ac59d3f6326d22d6e28c6d7bae`。
+5. `python verify.py Z_8_0311.bin build/v16/Z_8_0312.bin --features still-photo-tools raw-precapture --version 03.12 --tag y3`
 
 版本号与标签只是标识（相机会显示它们）；代码为 C3.11。
 
@@ -184,5 +193,7 @@ RAW 预拍连拍（野生动物摄影）。代码位于分支 `feature/raw-extra
 - **Turbo RAW 回放**使用存储卡根目录的 `Z8REVIEW.BIN`。用旧固件拍摄的帧，或所在存储卡没有该文件时，按固定步长回放。
 - **存储卡快速写入：** 只用一张卡测试过（ProGrade CFexpress 4.0 512 GB）。只在写入预拍 NEF 时生效；连拍中途断电可能丢失上次
   Flush 之后写入的 NEF。该功能及其菜单行只存在于不含视频功能组的构建中。
+- **缓存满时继续拍摄：** 减速部分的照片只能落在整个传感器帧上（C30 中间隔 33、67 或 100 毫秒），Turbo RAW 回放播放该部分时快于
+  实际时间。释放后连拍设为 1／2／3 秒时按照片张数计算而非秒数；长时间连拍请选“最大”。目前只用一张卡测试过 C30 FX HE★。
 - **不支持 C120 RAW。** 一次实验已能在相机中记录 C120 NEF，但常用转换软件无法打开其 4140 × 2756 的 HE RAW。
 - C15／C30 RAW 连拍期间剩余张数不倒数（与上游相同）。
